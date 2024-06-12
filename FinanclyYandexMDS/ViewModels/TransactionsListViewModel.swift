@@ -24,6 +24,7 @@ final class TransactionsListViewModel: ObservableObject {
 
     // MARK: - Data Loading
     func loadToday() async {
+        service.refresh()
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: Date())
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: startOfDay)!

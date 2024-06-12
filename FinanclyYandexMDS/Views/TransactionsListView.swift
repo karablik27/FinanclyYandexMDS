@@ -77,9 +77,9 @@ struct TransactionsListView: View {
                             if tx.id != viewModel.transactions.last?.id {
                                 Divider()
                                     .padding(.leading,
-                                        direction == .outcome
-                                            ? Constants.iconPaddingLeadingOutcome
-                                            : Constants.iconPaddingLeadingIncome
+                                             direction == .outcome
+                                             ? Constants.iconPaddingLeadingOutcome
+                                             : Constants.iconPaddingLeadingIncome
                                     )
                             }
                         }
@@ -118,9 +118,15 @@ struct TransactionsListView: View {
                 .padding(.bottom, Constants.overlayButtonPaddingBottom),
                 alignment: .bottomTrailing
             )
-            .fullScreenCover(item: $activeForm) { form in
+            .fullScreenCover(item: $activeForm, onDismiss: {
+                Task {
+                    await viewModel.loadToday()
+                }
+            }) { form in
                 AddTransactionView(mode: form)
             }
+
         }
     }
 }
+

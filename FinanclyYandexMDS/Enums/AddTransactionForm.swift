@@ -1,4 +1,4 @@
-enum AddTransactionForm: Identifiable {
+enum AddTransactionForm: Identifiable, Equatable {
     case create(direction: Direction)
     case edit(transaction: Transaction)
 
@@ -28,4 +28,15 @@ enum AddTransactionForm: Identifiable {
         case .edit(let tx):    return "edit-\(tx.id)"
         }
     }
+    
+    static func == (lhs: AddTransactionForm, rhs: AddTransactionForm) -> Bool {
+            switch (lhs, rhs) {
+            case let (.create(ld), .create(rd)):
+                return ld == rd
+            case let (.edit(ltx), .edit(rtx)):
+                return ltx.id == rtx.id
+            default:
+                return false
+            }
+        }
 }

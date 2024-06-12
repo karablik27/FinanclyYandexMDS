@@ -26,6 +26,11 @@ final class TransactionsFileCache {
     func remove(withId id: Int) {
         transactions.removeAll { $0.id == id }
     }
+    
+    func replaceAll(_ newTransactions: [Transaction]) {
+        transactions = newTransactions
+    }
+
 
     // MARK: - Persistence
     func save(to fileURL: URL) throws {
