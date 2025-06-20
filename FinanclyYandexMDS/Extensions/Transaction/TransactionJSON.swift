@@ -1,8 +1,36 @@
 import Foundation
 
+// MARK: - Ошибки при парсинге транзакций
+enum TransactionParseError: Error, LocalizedError {
+    case notADictionary
+    case missingField(String)
+    case invalidField(String)
+    case invalidDate(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .notADictionary:
+            return "Provided JSON is not a dictionary."
+        case .missingField(let field):
+            return "Missing required field: \(field)."
+        case .invalidField(let field):
+            return "Invalid format in field: \(field)."
+        case .invalidDate(let field):
+            return "Invalid date format in field: \(field)."
+        }
+    }
+}
+
 extension Transaction {
-    
-    // TransactionResponse
+
+    // MARK: - Общий форматтер ISO8601 с миллисекундами
+    private static let formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    // MARK: - Сериализация в JSON-подобный словарь
     var jsonObject: Any {
         return [
             "id": id,
@@ -19,24 +47,21 @@ extension Transaction {
                 "isIncome": category.isIncome
             ],
             "amount": "\(amount)",
-            "transactionDate": ISO8601DateFormatter().string(from: transactionDate),
-            "comment": comment ?? "",
-            "createdAt": ISO8601DateFormatter().string(from: createdAt),
-            "updatedAt": ISO8601DateFormatter().string(from: updatedAt)
+            "transactionDate": Self.formatter.string(from: transactionDate),
+            "comment": comment as Any? ?? NSNull(),
+            "createdAt": Self.formatter.string(from: createdAt),
+            "updatedAt": Self.formatter.string(from: updatedAt)
         ]
     }
 
-    static func parse(jsonObject: Any) -> Transaction? {
-        
+    // MARK: - Десериализация из JSON-подобного словаря
+    static func parse(jsonObject: Any) throws -> Transaction {
         guard let dict = jsonObject as? [String: Any] else {
-            print("JSONObject is not a dictionary.")
-            return nil
+            throw TransactionParseError.notADictionary
         }
 
-        // First field
         guard let id = dict["id"] as? Int else {
-            print("Missing or invalid 'id'.")
-            return nil
+            throw TransactionParseError.missingField("id")
         }
 
         // Account
@@ -46,8 +71,7 @@ extension Transaction {
               let accountBalanceString = accountDict["balance"] as? String,
               let accountBalance = Decimal(string: accountBalanceString),
               let accountCurrency = accountDict["currency"] as? String else {
-            print("Error parsing AccountBrief.")
-            return nil
+            throw TransactionParseError.invalidField("account")
         }
 
         // Category
@@ -57,41 +81,35 @@ extension Transaction {
               let categoryEmojiString = categoryDict["emoji"] as? String,
               let categoryEmoji = categoryEmojiString.first,
               let categoryIsIncome = categoryDict["isIncome"] as? Bool else {
-            print("Error parsing Category.")
-            return nil
+            throw TransactionParseError.invalidField("category")
         }
 
-        // Other fields
+        // Amount
         guard let amountString = dict["amount"] as? String,
               let amount = Decimal(string: amountString) else {
-            print("Invalid or missing 'amount' field.")
-            return nil
+            throw TransactionParseError.invalidField("amount")
         }
 
-        let formatter = ISO8601DateFormatter()
-
+        // Dates
         guard let transactionDateStr = dict["transactionDate"] as? String,
               let transactionDate = formatter.date(from: transactionDateStr) else {
-            print("Invalid 'transactionDate' field.")
-            return nil
+            throw TransactionParseError.invalidDate("transactionDate")
         }
 
         guard let createdAtStr = dict["createdAt"] as? String,
               let createdAt = formatter.date(from: createdAtStr) else {
-            print("Invalid 'createdAt' field.")
-            return nil
+            throw TransactionParseError.invalidDate("createdAt")
         }
 
         guard let updatedAtStr = dict["updatedAt"] as? String,
               let updatedAt = formatter.date(from: updatedAtStr) else {
-            print("Invalid 'updatedAt' field.")
-            return nil
+            throw TransactionParseError.invalidDate("updatedAt")
         }
 
-        // Optional comment
+        // Optional
         let comment = dict["comment"] as? String
 
-        // Init Category and AccountBrief
+        // Build objects
         let account = BankAccount(id: accountId, name: accountName, balance: accountBalance, currency: accountCurrency)
         let category = Category(id: categoryId, name: categoryName, emoji: categoryEmoji, isIncome: categoryIsIncome)
 
