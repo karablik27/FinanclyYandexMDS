@@ -4,15 +4,17 @@ import XCTest
 final class TransactionJSONTests: XCTestCase {
     
     // MARK: - Constants
-    // ISO8601 formatter used for date comparisons
-    private let iso = ISO8601DateFormatter()
-    
-    // Base date used in test transactions
-    private let baseDate = ISO8601DateFormatter().date(from: "2025-06-11T16:12:34Z")!
+    private let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 
+    private lazy var baseDate: Date = {
+        iso.date(from: "2025-06-11T16:12:34.235Z")!
+    }()
 
     // MARK: - Shared Test Data
-    // Mock bank account used in transactions
     private var account: BankAccount {
         BankAccount(
             id: 1,
@@ -21,19 +23,16 @@ final class TransactionJSONTests: XCTestCase {
             currency: "RUB"
         )
     }
-    
-    // Mock income category ("Зарплата")
+
     private var salaryCategory: FinanclyYandexMDS.Category {
         Category(id: 1, name: "Зарплата", emoji: "💰", isIncome: true)
     }
 
-    // Mock outcome category ("Ресторан")
     private var foodCategory: FinanclyYandexMDS.Category {
         Category(id: 2, name: "Ресторан", emoji: "🍽️", isIncome: false)
     }
 
-    // MARK: - Transaction Fixtures
-    // Creates a test income transaction
+    // MARK: - Fixtures
     private func salaryTransaction() -> Transaction {
         Transaction(
             id: 1,
@@ -47,7 +46,6 @@ final class TransactionJSONTests: XCTestCase {
         )
     }
 
-    // Creates a test expense transaction
     private func foodTransaction() -> Transaction {
         Transaction(
             id: 2,
@@ -62,54 +60,43 @@ final class TransactionJSONTests: XCTestCase {
     }
 
     // MARK: - Tests
+
     func test_salaryTransaction_JSONRoundTrip() throws {
         let tx = salaryTransaction()
         let obj = tx.jsonObject
 
-        // Ensure result is valid for JSON serialization
         XCTAssertTrue(JSONSerialization.isValidJSONObject(obj), "jsonObject must be valid JSON")
 
-        // Parse back and verify correctness
-        guard let parsed = Transaction.parse(jsonObject: obj) else {
-            XCTFail("Failed to parse salary transaction")
-            return
-        }
+        let parsed = try Transaction.parse(jsonObject: obj)
 
         XCTAssertEqual(parsed.id, tx.id)
         XCTAssertEqual(parsed.account.name, tx.account.name)
         XCTAssertEqual(parsed.category.name, "Зарплата")
-        XCTAssertEqual(parsed.category.isIncome, true)
+        XCTAssertTrue(parsed.category.isIncome)
         XCTAssertEqual(parsed.amount, tx.amount)
         XCTAssertEqual(parsed.comment, tx.comment)
         XCTAssertEqual(iso.string(from: parsed.transactionDate), iso.string(from: tx.transactionDate))
     }
 
-    // Tests serialization and parsing of an expense transaction (food)
     func test_foodTransaction_JSONRoundTrip() throws {
         let tx = foodTransaction()
         let obj = tx.jsonObject
 
-        // Ensure result is valid for JSON serialization
         XCTAssertTrue(JSONSerialization.isValidJSONObject(obj), "jsonObject must be valid JSON")
 
-        // Parse back and verify correctness
-        guard let parsed = Transaction.parse(jsonObject: obj) else {
-            XCTFail("Failed to parse food transaction")
-            return
-        }
+        let parsed = try Transaction.parse(jsonObject: obj)
 
         XCTAssertEqual(parsed.id, tx.id)
         XCTAssertEqual(parsed.account.name, tx.account.name)
         XCTAssertEqual(parsed.category.name, "Ресторан")
-        XCTAssertEqual(parsed.category.isIncome, false)
+        XCTAssertFalse(parsed.category.isIncome)
         XCTAssertEqual(parsed.amount, tx.amount)
         XCTAssertEqual(parsed.comment, tx.comment)
         XCTAssertEqual(iso.string(from: parsed.transactionDate), iso.string(from: tx.transactionDate))
     }
 
-    // Tests that invalid or malformed input returns nil
-    func test_parse_invalidInput_returnsNil() {
-        XCTAssertNil(Transaction.parse(jsonObject: "not a dict"))
-        XCTAssertNil(Transaction.parse(jsonObject: ["bad": "data"]))
+    func test_parse_invalidInput_throwsError() {
+        XCTAssertThrowsError(try Transaction.parse(jsonObject: "not a dict"))
+        XCTAssertThrowsError(try Transaction.parse(jsonObject: ["bad": "data"]))
     }
 }

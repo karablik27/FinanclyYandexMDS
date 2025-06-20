@@ -1,13 +1,16 @@
 import XCTest
 @testable import FinanclyYandexMDS
 
-// Не  трбовалось для дз, чисто для себя проверить
 final class TransactionCSVTests: XCTestCase {
 
-    private let iso = ISO8601DateFormatter()
+    private let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 
     private var transaction: Transaction {
-        let baseDate = iso.date(from: "2025-06-11T16:12:34Z")!
+        let baseDate = iso.date(from: "2025-06-11T16:12:34.235Z")!
 
         let account = BankAccount(
             id: 1,
@@ -43,7 +46,7 @@ final class TransactionCSVTests: XCTestCase {
         XCTAssertEqual(columns[11], "Тестовая запись")
     }
 
-    func test_parseCSV_singleLine() {
+    func test_parseCSV_singleLine() throws {
         let csvHeader = [
             "id", "accountId", "accountName", "accountBalance", "accountCurrency",
             "categoryId", "categoryName", "categoryEmoji", "isIncome",
@@ -53,7 +56,7 @@ final class TransactionCSVTests: XCTestCase {
         let csvLine = transaction.csvLine
         let csv = [csvHeader, csvLine].joined(separator: "\n")
 
-        let parsed = Transaction.parseCSV(from: csv)
+        let parsed = try Transaction.parseCSV(from: csv)
 
         XCTAssertEqual(parsed.count, 1)
         let tx = parsed[0]
@@ -66,22 +69,22 @@ final class TransactionCSVTests: XCTestCase {
         XCTAssertEqual(iso.string(from: tx.transactionDate), iso.string(from: transaction.transactionDate))
     }
 
-    func test_parseCSV_emptyLinesIgnored() {
+    func test_parseCSV_emptyLinesIgnored() throws {
         let csv = """
         id,accountId,accountName,accountBalance,accountCurrency,categoryId,categoryName,categoryEmoji,isIncome,amount,transactionDate,comment,createdAt,updatedAt
 
         """
 
-        let result = Transaction.parseCSV(from: csv)
+        let result = try Transaction.parseCSV(from: csv)
         XCTAssertTrue(result.isEmpty)
     }
 
-    func test_roundTrip_csvLine_parseCSV() {
+    func test_roundTrip_csvLine_parseCSV() throws {
         let original = transaction
         let header = "id,accountId,accountName,accountBalance,accountCurrency,categoryId,categoryName,categoryEmoji,isIncome,amount,transactionDate,comment,createdAt,updatedAt"
         let csv = [header, original.csvLine].joined(separator: "\n")
 
-        let parsed = Transaction.parseCSV(from: csv)
+        let parsed = try Transaction.parseCSV(from: csv)
         XCTAssertEqual(parsed.count, 1)
 
         let restored = parsed[0]

@@ -1,11 +1,5 @@
 import Foundation
 
-// MARK: - Direction Enum
-enum Direction {
-    case income
-    case outcome
-}
-
 // MARK: - Category Model
 struct Category: Codable, Identifiable {
     let id: Int
