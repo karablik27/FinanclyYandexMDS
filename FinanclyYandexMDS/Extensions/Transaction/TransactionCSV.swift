@@ -1,102 +1,114 @@
 import Foundation
 
+// MARK: - Ошибки CSV-парсинга
+enum TransactionCSVParseError: Error, LocalizedError {
+    case invalidColumnCount(Int, Int)
+    case invalidField(Int, String, String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidColumnCount(let line, let count):
+            return "Line \(line): not enough columns (\(count))."
+        case .invalidField(let line, let field, let value):
+            return "Line \(line): invalid value '\(value)' for field '\(field)'."
+        }
+    }
+}
+
 extension Transaction {
 
-    // MARK: - CSV Parsing with error handling
-    static func parseCSV(from csv: String) -> [Transaction] {
-        let lines = csv.components(separatedBy: .newlines).filter { !$0.isEmpty }
+    // MARK: - CSV Parsing with error throwing
+    static func parseCSV(from csv: String) throws -> [Transaction] {
+        let lines = csv.components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+
+        // Только заголовок? — ничего не парсим
         guard lines.count > 1 else { return [] }
 
         let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
         var result: [Transaction] = []
 
         for (index, line) in lines.dropFirst().enumerated() {
-            let cols = line.components(separatedBy: ",")
+            let lineNumber = index + 2
+            let cols = parseCSVRow(line)
+
             guard cols.count >= 14 else {
-                print("Line \(index + 2): not enough columns (\(cols.count))")
-                continue
+                throw TransactionCSVParseError.invalidColumnCount(lineNumber, cols.count)
             }
 
             guard let id = Int(cols[0]) else {
-                print("Line \(index + 2): invalid id: \(cols[0])")
-                continue
+                throw TransactionCSVParseError.invalidField(lineNumber, "id", cols[0])
             }
 
             guard let accId = Int(cols[1]) else {
-                print("Line \(index + 2): invalid account id: \(cols[1])")
-                continue
+                throw TransactionCSVParseError.invalidField(lineNumber, "account id", cols[1])
             }
 
             let accName = cols[2]
-            if accName.isEmpty {
-                print("Line \(index + 2): empty account name")
-                continue
+            guard !accName.isEmpty else {
+                throw TransactionCSVParseError.invalidField(lineNumber, "account name", accName)
             }
 
             guard let accBalance = Decimal(string: cols[3]) else {
-                print("Line \(index + 2): invalid balance: \(cols[3])")
-                continue
+                throw TransactionCSVParseError.invalidField(lineNumber, "balance", cols[3])
             }
 
             let accCurrency = cols[4]
-            if accCurrency.isEmpty {
-                print("Line \(index + 2): empty currency")
-                continue
+            guard !accCurrency.isEmpty else {
+                throw TransactionCSVParseError.invalidField(lineNumber, "currency", accCurrency)
             }
 
             guard let catId = Int(cols[5]) else {
-                print("Line \(index + 2): invalid category id: \(cols[5])")
-                continue
+                throw TransactionCSVParseError.invalidField(lineNumber, "category id", cols[5])
             }
 
             let catName = cols[6]
-            if catName.isEmpty {
-                print("Line \(index + 2): empty category name")
-                continue
+            guard !catName.isEmpty else {
+                throw TransactionCSVParseError.invalidField(lineNumber, "category name", catName)
             }
 
             let catEmojiStr = cols[7]
             guard let catEmoji = catEmojiStr.first else {
-                print("Line \(index + 2): missing emoji")
-                continue
+                throw TransactionCSVParseError.invalidField(lineNumber, "emoji", catEmojiStr)
             }
 
             guard let catIsIncome = Bool(cols[8]) else {
-                print("Line \(index + 2): invalid isIncome value: \(cols[8])")
-                continue
+                throw TransactionCSVParseError.invalidField(lineNumber, "isIncome", cols[8])
             }
 
             guard let amt = Decimal(string: cols[9]) else {
-                print("Line \(index + 2): invalid amount: \(cols[9])")
-                continue
+                throw TransactionCSVParseError.invalidField(lineNumber, "amount", cols[9])
             }
 
             guard let txDate = fmt.date(from: cols[10]) else {
-                print("Line \(index + 2): invalid transaction date: \(cols[10])")
-                continue
+                throw TransactionCSVParseError.invalidField(lineNumber, "transactionDate", cols[10])
             }
-            
 
-            // Optional comment
             let comment = cols[11].isEmpty ? nil : cols[11]
 
             guard let cDate = fmt.date(from: cols[12]) else {
-                print("Line \(index + 2): invalid createdAt date: \(cols[12])")
-                continue
+                throw TransactionCSVParseError.invalidField(lineNumber, "createdAt", cols[12])
             }
 
             guard let uDate = fmt.date(from: cols[13]) else {
-                print("Line \(index + 2): invalid updatedAt date: \(cols[13])")
-                continue
+                throw TransactionCSVParseError.invalidField(lineNumber, "updatedAt", cols[13])
             }
 
-            // Init Category and AccountBrief
             let account = BankAccount(id: accId, name: accName, balance: accBalance, currency: accCurrency)
             let category = Category(id: catId, name: catName, emoji: catEmoji, isIncome: catIsIncome)
 
-            let tx = Transaction(id: id, account: account, category: category, amount: amt,
-                                 transactionDate: txDate, comment: comment,
-                                 createdAt: cDate, updatedAt: uDate)
+            let tx = Transaction(
+                id: id,
+                account: account,
+                category: category,
+                amount: amt,
+                transactionDate: txDate,
+                comment: comment,
+                createdAt: cDate,
+                updatedAt: uDate
+            )
             result.append(tx)
         }
 
@@ -106,21 +118,73 @@ extension Transaction {
     // MARK: - CSV Line Generation
     var csvLine: String {
         let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
         return [
             "\(id)",
             "\(account.id)",
-            account.name,
+            escapeCSV(account.name),
             "\(account.balance)",
             account.currency,
             "\(category.id)",
-            category.name,
+            escapeCSV(category.name),
             String(category.emoji),
             "\(category.isIncome)",
             "\(amount)",
             fmt.string(from: transactionDate),
-            comment ?? "",
+            escapeCSV(comment),
             fmt.string(from: createdAt),
             fmt.string(from: updatedAt)
         ].joined(separator: ",")
+    }
+
+    // MARK: - CSV Escaping Helper
+    private func escapeCSV(_ value: String?) -> String {
+        guard let value = value else { return "" }
+        if value.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n" }) {
+            let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+            return "\"\(escaped)\""
+        } else {
+            return value
+        }
+    }
+
+    // MARK: - CSV Row Parser
+    private static func parseCSVRow(_ line: String) -> [String] {
+        var result: [String] = []
+        var current = ""
+        var inQuotes = false
+        var iterator = line.makeIterator()
+
+        while let char = iterator.next() {
+            if char == "\"" {
+                if inQuotes {
+                    if let next = iterator.next() {
+                        if next == "\"" {
+                            current.append("\"")
+                        } else if next == "," {
+                            result.append(current)
+                            current = ""
+                            inQuotes = false
+                        } else {
+                            current.append(next)
+                            inQuotes = false
+                        }
+                    } else {
+                        inQuotes = false
+                    }
+                } else {
+                    inQuotes = true
+                }
+            } else if char == "," && !inQuotes {
+                result.append(current)
+                current = ""
+            } else {
+                current.append(char)
+            }
+        }
+
+        result.append(current)
+        return result
     }
 }
