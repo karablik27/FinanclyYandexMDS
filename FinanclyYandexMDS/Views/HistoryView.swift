@@ -23,6 +23,7 @@ private enum Constants {
 struct HistoryView: View {
 
     // MARK: - Properties
+    @AppStorage("currencyCode") private var currencyCode: String = Currency.rub.rawValue
     let direction: Direction
     @StateObject private var vm: HistoryViewModel
     @Environment(\.dismiss) private var dismiss
@@ -45,7 +46,7 @@ struct HistoryView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: Constants.sectionSpacing) {
-                
+
                 // MARK: - Header
                 Text("Моя история")
                     .font(.largeTitle.bold())
@@ -57,17 +58,11 @@ struct HistoryView: View {
                     periodRow(
                         title: "Начало",
                         date: Binding(
-                            get: {
-                                vm.startDate
-                            },
+                            get: { vm.startDate },
                             set: { new in
                                 vm.startDate = new
-                                if new > vm.endDate {
-                                    vm.endDate = new
-                                }
-                                Task {
-                                    await vm.load()
-                                }
+                                if new > vm.endDate { vm.endDate = new }
+                                Task { await vm.load() }
                             }
                         )
                     )
@@ -75,17 +70,11 @@ struct HistoryView: View {
                     periodRow(
                         title: "Конец",
                         date: Binding(
-                            get: {
-                                vm.endDate
-                            },
+                            get: { vm.endDate },
                             set: { new in
                                 vm.endDate = new
-                                if new < vm.startDate {
-                                    vm.startDate = new
-                                }
-                                Task {
-                                    await vm.load()
-                                }
+                                if new < vm.startDate { vm.startDate = new }
+                                Task { await vm.load() }
                             }
                         )
                     )
@@ -109,7 +98,7 @@ struct HistoryView: View {
                         Spacer()
                         Text(
                             vm.total.formatted(
-                                .currency(code: "RUB")
+                                .currency(code: currencyCode)
                                     .locale(Locale(identifier: "ru_RU"))
                                     .precision(.fractionLength(0))
                             )
@@ -145,12 +134,10 @@ struct HistoryView: View {
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .toolbar {
-                
-                // MARK: - Toolbar Buttons
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: {
+                    Button {
                         dismiss()
-                    }) {
+                    } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left")
                             Text("Назад")
@@ -180,8 +167,7 @@ struct HistoryView: View {
             return vm.transactions.sorted { $0.amount < $1.amount }
         }
     }
-    
-    // Вот это потом может в отдельный файл вынесу если где-то переиспользовать буду.
+
     // MARK: - Period Row
     @ViewBuilder
     private func periodRow(title: String, date: Binding<Date>) -> some View {
@@ -204,7 +190,6 @@ struct HistoryView: View {
                     .frame(width: Constants.periodRowHeight.width,
                            height: Constants.periodRowHeight.height)
                     .blendMode(.destinationOver)
-                    .onChange(of: date.wrappedValue) { _, _ in}
             }
         }
         .padding(.vertical, Constants.verticalPaddingPeriod)
@@ -220,7 +205,7 @@ struct HistoryView: View {
                 .frame(width: Constants.operationIconSize, height: Constants.operationIconSize)
                 .overlay(Text(String(tx.category.emoji)).font(.body))
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: Constants.captionSpacing) {
                 Text(tx.category.name).font(.body)
                 if let c = tx.comment {
                     Text(c).font(.caption2).foregroundColor(.gray)
@@ -231,7 +216,7 @@ struct HistoryView: View {
 
             Text(
                 tx.amount.formatted(
-                    .currency(code: "RUB")
+                    .currency(code: currencyCode)
                         .locale(Locale(identifier: "ru_RU"))
                         .precision(.fractionLength(0))
                 )

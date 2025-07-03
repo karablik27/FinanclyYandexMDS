@@ -39,7 +39,7 @@ struct MainTab: View {
                 }
 
             // MARK: - Account Tab
-            Text("Счет")
+            BankAccountView()
                 .tabItem {
                     Label {
                         Text("Счет")

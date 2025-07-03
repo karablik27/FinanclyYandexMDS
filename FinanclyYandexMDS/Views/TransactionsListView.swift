@@ -4,7 +4,6 @@ private enum Constants {
     static let navigationHorizontalPadding: CGFloat = 16
     static let sectionVerticalSpacing: CGFloat = 16
     static let titleHorizontalPadding: CGFloat = 16
-    static let titleTopPadding: CGFloat = 0
     static let totalVerticalPadding: CGFloat = 12
     static let totalHorizontalPadding: CGFloat = 16
     static let cardCornerRadius: CGFloat = 12
@@ -24,6 +23,7 @@ struct TransactionsListView: View {
     
     let direction: Direction
     @StateObject private var viewModel: TransactionsListViewModel
+    @AppStorage("currencyCode") private var currencyCode: String = Currency.rub.rawValue
 
     init(direction: Direction) {
         self.direction = direction
@@ -45,7 +45,7 @@ struct TransactionsListView: View {
                     Spacer()
                     Text(
                         viewModel.total.formatted(
-                            .currency(code: "RUB")
+                            .currency(code: currencyCode)
                                 .locale(Locale(identifier: "ru_RU"))
                                 .precision(.fractionLength(0))
                         )
@@ -88,7 +88,7 @@ struct TransactionsListView: View {
 
                                 Text(
                                     tx.amount.formatted(
-                                        .currency(code: "RUB")
+                                        .currency(code: currencyCode)
                                             .locale(Locale(identifier: "ru_RU"))
                                             .precision(.fractionLength(0))
                                     )
