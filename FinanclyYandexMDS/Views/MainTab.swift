@@ -50,7 +50,7 @@ struct MainTab: View {
                 }
 
             // MARK: - Categories Tab
-            Text("Статьи")
+            CategoriesView()
                 .tabItem {
                     Label {
                         Text("Статьи")
