@@ -146,12 +146,14 @@ struct HistoryView: View {
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        // пока пусто
+                    NavigationLink {
+                        AnalysisViewControllerWrapper(direction: direction)
+                            .edgesIgnoringSafeArea(.top)
+                            .navigationBarBackButtonHidden(true)
                     } label: {
                         Image(systemName: "doc")
+                            .foregroundColor(Color(hex: "#6F5DB7"))
                     }
-                    .foregroundColor(Color(hex: "#6F5DB7"))
                 }
             }
         }

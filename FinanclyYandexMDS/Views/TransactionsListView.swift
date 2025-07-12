@@ -16,20 +16,18 @@ private enum Constants {
     static let overlayButtonSize: CGFloat = 16
     static let overlayButtonPaddingTrailing: CGFloat = 16
     static let overlayButtonPaddingBottom: CGFloat = 24
-    static let overlayButtonFontSize: CGFloat = 20 // title2
+    static let overlayButtonFontSize: CGFloat = 20
 }
 
 struct TransactionsListView: View {
-    
     let direction: Direction
     @StateObject private var viewModel: TransactionsListViewModel
     @AppStorage("currencyCode") private var currencyCode: String = Currency.rub.rawValue
+    @State private var activeForm: AddTransactionForm?
 
     init(direction: Direction) {
         self.direction = direction
-        _viewModel = StateObject(
-            wrappedValue: TransactionsListViewModel(direction: direction)
-        )
+        _viewModel = StateObject(wrappedValue: TransactionsListViewModel(direction: direction))
     }
 
     var body: some View {
@@ -43,13 +41,11 @@ struct TransactionsListView: View {
                     Text("Всего")
                         .font(.headline)
                     Spacer()
-                    Text(
-                        viewModel.total.formatted(
-                            .currency(code: currencyCode)
-                                .locale(Locale(identifier: "ru_RU"))
-                                .precision(.fractionLength(0))
-                        )
-                    )
+                    Text(viewModel.total.formatted(
+                        .currency(code: currencyCode)
+                            .locale(Locale(identifier: "ru_RU"))
+                            .precision(.fractionLength(0))
+                    ))
                     .font(.headline)
                 }
                 .padding(.vertical, Constants.totalVerticalPadding)
@@ -67,40 +63,16 @@ struct TransactionsListView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(viewModel.transactions, id: \.id) { tx in
-                            HStack(spacing: Constants.cellHorizontalPadding) {
-                                if direction == .outcome {
-                                    Circle()
-                                        .fill(Color.accentColor.opacity(0.2))
-                                        .frame(width: Constants.iconSize, height: Constants.iconSize)
-                                        .overlay(Text(String(tx.category.emoji)))
-                                }
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(tx.category.name).font(.body)
-                                    if let comment = tx.comment {
-                                        Text(comment)
-                                            .font(.caption2)
-                                            .foregroundColor(.gray)
-                                    }
-                                }
-
-                                Spacer()
-
-                                Text(
-                                    tx.amount.formatted(
-                                        .currency(code: currencyCode)
-                                            .locale(Locale(identifier: "ru_RU"))
-                                            .precision(.fractionLength(0))
-                                    )
+                            Button {
+                                activeForm = .edit(transaction: tx)
+                            } label: {
+                                TransactionRowView(
+                                    transaction: tx,
+                                    currencyCode: currencyCode,
+                                    direction: direction
                                 )
-                                .font(.body)
-
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2)
-                                    .foregroundColor(.gray)
                             }
-                            .padding(.vertical, Constants.cellVerticalPadding)
-                            .padding(.horizontal, Constants.cellHorizontalPadding)
+                            .buttonStyle(PlainButtonStyle())
 
                             if tx.id != viewModel.transactions.last?.id {
                                 Divider()
@@ -134,7 +106,7 @@ struct TransactionsListView: View {
             }
             .overlay(
                 Button {
-                    // пока пусто
+                    activeForm = .create(direction: direction)
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: Constants.overlayButtonFontSize))
@@ -146,6 +118,9 @@ struct TransactionsListView: View {
                 .padding(.bottom, Constants.overlayButtonPaddingBottom),
                 alignment: .bottomTrailing
             )
+            .fullScreenCover(item: $activeForm) { form in
+                AddTransactionView(mode: form)
+            }
         }
     }
 }
