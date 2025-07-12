@@ -11,7 +11,6 @@ final class TransactionsListViewModel: ObservableObject {
     @Published var total: Decimal = 0
 
     // MARK: - Private Properties
-
     private let direction: Direction
     private let service = TransactionsService()
 
