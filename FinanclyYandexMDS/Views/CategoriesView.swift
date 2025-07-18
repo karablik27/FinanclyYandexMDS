@@ -16,30 +16,32 @@ private enum Constants {
 
 // MARK: – Top-level screen
 struct CategoriesView: View {
-    @StateObject private var vm = CategoriesViewModel()
+    let client: NetworkClient
+
+    @StateObject private var vm: CategoriesViewModel
     private var filtered: [Category] { vm.filteredCategories }
+
+    init(client: NetworkClient) {
+        self.client = client
+        _vm = StateObject(wrappedValue: CategoriesViewModel(client: client))
+    }
 
     var body: some View {
         NavigationView {
             VStack(alignment: .leading, spacing: Constants.vSpace) {
-
-                // ── Header
                 Text("Мои статьи")
                     .font(.largeTitle.bold())
                     .padding(.top, Constants.topOffset)
                     .padding(.horizontal, Constants.titleHPad)
 
-                // ── Search
                 SearchBar(text: $vm.searchText)
                     .padding(.horizontal, Constants.titleHPad)
 
-                // ── Caption
                 Text("СТАТЬИ")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.horizontal, Constants.titleHPad)
 
-                // ── LIST / EMPTY STATE
                 if filtered.isEmpty {
                     EmptyStateView()
                         .frame(maxWidth: .infinity)
@@ -54,8 +56,7 @@ struct CategoriesView: View {
 
                                 if cat.id != filtered.last?.id {
                                     Divider()
-                                        .padding(.leading,
-                                                 Constants.icon + Constants.cellHPad)
+                                        .padding(.leading, Constants.icon + Constants.cellHPad)
                                 }
                             }
                         }
@@ -68,14 +69,24 @@ struct CategoriesView: View {
                 Spacer(minLength: Constants.vSpace)
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .alert("Ошибка", isPresented: Binding(get: {
+                vm.error != nil
+            }, set: { _ in
+                vm.error = nil
+            })) {
+                Button("Ок", role: .cancel) {}
+            } message: {
+                Text(vm.error?.localizedDescription ?? "Неизвестная ошибка")
+            }
         }
-        .task { await vm.load() }
     }
 
     private var cardBackground: some View {
         Color(.systemBackground)
     }
 }
+
+
 
 // MARK: – Row
 private struct CategoryRow: View {

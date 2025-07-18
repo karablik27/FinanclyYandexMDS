@@ -1,12 +1,17 @@
 import UIKit
+import Combine
+import SwiftUI
 
-final class AnalysisViewController: UIViewController {
+final class AnalysisViewController: UIViewController, UIAdaptivePresentationControllerDelegate {
 
     private let viewModel: AnalysisViewModel
     private let startDatePicker = UIDatePicker()
     private let endDatePicker = UIDatePicker()
     private let sumLabel = UILabel()
     private let tableView = UITableView(frame: .zero, style: .plain)
+    private let activityIndicator = UIActivityIndicatorView(style: .large)
+
+    private var cancellables = Set<AnyCancellable>()
 
     private let sortControl: UISegmentedControl = {
         let control = UISegmentedControl(items: ["По дате", "По сумме"])
@@ -19,8 +24,8 @@ final class AnalysisViewController: UIViewController {
     }()
 
     // MARK: - Init
-    init(direction: Direction) {
-        self.viewModel = AnalysisViewModel(direction: direction)
+    init(service: TransactionsService, accountId: Int, direction: Direction) {
+        self.viewModel = AnalysisViewModel(service: service, accountId: accountId, direction: direction)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -124,11 +129,12 @@ final class AnalysisViewController: UIViewController {
         tableView.backgroundColor = .clear
         tableView.separatorInset = UIEdgeInsets(top: 0, left: 40, bottom: 0, right: 0)
         tableView.translatesAutoresizingMaskIntoConstraints = false
-        tableView.isScrollEnabled = true
-        tableView.tableFooterView = UIView()
         tableView.layer.cornerRadius = 12
         tableView.clipsToBounds = true
-        tableView.showsVerticalScrollIndicator = false
+
+        activityIndicator.center = view.center
+        activityIndicator.hidesWhenStopped = true
+        view.addSubview(activityIndicator)
 
         view.addSubview(periodStack)
         view.addSubview(operationsHeader)
@@ -148,6 +154,52 @@ final class AnalysisViewController: UIViewController {
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
         ])
+    }
+
+    private func bindViewModel() {
+        startDatePicker.date = viewModel.startDate
+        endDatePicker.date = viewModel.endDate
+        updateSum()
+
+        viewModel.$isLoading
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] loading in
+                loading ? self?.activityIndicator.startAnimating() : self?.activityIndicator.stopAnimating()
+            }
+            .store(in: &cancellables)
+
+        viewModel.$alertMessage
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] message in
+                self?.showErrorAlert(message)
+            }
+            .store(in: &cancellables)
+
+        viewModel.onUpdate = { [weak self] in
+            self?.updateSum()
+            self?.tableView.reloadData()
+        }
+    }
+
+    private func updateSum() {
+        let currencyCode = UserDefaults.standard.string(forKey: "currencyCode") ?? "RUB"
+        sumLabel.text = formatCurrency(viewModel.total, code: currencyCode)
+    }
+
+    private func showErrorAlert(_ message: String) {
+        let alert = UIAlertController(title: "Ошибка", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Ок", style: .cancel))
+        present(alert, animated: true)
+    }
+
+    private func formatCurrency(_ amount: Decimal, code: String) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = code
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: amount as NSDecimalNumber) ?? "\(amount)"
     }
 
     private func labeledRow(title: String, control: UIView) -> UIStackView {
@@ -210,32 +262,6 @@ final class AnalysisViewController: UIViewController {
         return view
     }
 
-    // MARK: - ViewModel Binding
-    private func bindViewModel() {
-        startDatePicker.date = viewModel.startDate
-        endDatePicker.date = viewModel.endDate
-        updateSum()
-
-        viewModel.onUpdate = { [weak self] in
-            self?.updateSum()
-            self?.tableView.reloadData()
-        }
-    }
-
-    private func updateSum() {
-        let currencyCode = UserDefaults.standard.string(forKey: "currencyCode") ?? "RUB"
-        sumLabel.text = formatCurrency(viewModel.total, code: currencyCode)
-    }
-
-    private func formatCurrency(_ amount: Decimal, code: String) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = code
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.maximumFractionDigits = 2
-        return formatter.string(from: amount as NSDecimalNumber) ?? "\(amount)"
-    }
-
     // MARK: - Actions
     @objc private func didTapBack() {
         navigationController?.popViewController(animated: true)
@@ -262,6 +288,13 @@ final class AnalysisViewController: UIViewController {
     @objc private func sortOptionChanged(_ sender: UISegmentedControl) {
         viewModel.sortOption = sender.selectedSegmentIndex == 0 ? .date : .amount
     }
+
+    // MARK: - Delegate on dismiss
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        Task {
+            await viewModel.load()
+        }
+    }
 }
 
 extension AnalysisViewController: UITableViewDataSource, UITableViewDelegate {
@@ -272,8 +305,18 @@ extension AnalysisViewController: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let tx = viewModel.transactions[indexPath.row]
         let cell = tableView.dequeueReusableCell(withIdentifier: AnalysisCell.reuseIdentifier, for: indexPath) as! AnalysisCell
-        let currencyCode = UserDefaults.standard.string(forKey: "currencyCode") ?? "RUB"
+        let currencyCode = UserDefaults.standard.string(forKey: "selectedCurrency") ?? "RUB"
         cell.configure(with: tx, total: viewModel.total, currencyCode: currencyCode)
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let tx = viewModel.transactions[indexPath.row]
+        let view = AddTransactionView(mode: .edit(transaction: tx), client: viewModel.service.client, accountId: viewModel.accountId)
+        let vc = UIHostingController(rootView: view)
+        vc.modalPresentationStyle = .fullScreen
+        present(vc, animated: true) {
+            vc.presentationController?.delegate = self
+        }
     }
 }

@@ -1,21 +1,36 @@
 import Foundation
 
 final class CategoriesService {
+    private let client: NetworkClient
 
-    // MARK: - Mock Data
-    private let mockCategories: [Category] = [
-        Category(id: 1, name: "Кино", emoji: "🎬", isIncome: false),
-        Category(id: 2, name: "Зарплата", emoji: "💵", isIncome: true),
-        Category(id: 3, name: "Рестораны", emoji: "🍽️", isIncome: false)
-    ]
-
-    // MARK: - Public Methods
-    // Пока без обработки ошибок тк работаем с фейк данными.
-    func all() async -> [Category] {
-        return mockCategories
+    init(client: NetworkClient) {
+        self.client = client
     }
 
-    func byDirection(_ direction: Direction) async -> [Category] {
-        return mockCategories.filter { $0.direction == direction }
+    func all() async throws -> [Category] {
+        return try await client.request(
+            path: "categories",
+            method: "GET",
+            body: Optional<EmptyRequest>.none
+        )
+    }
+
+
+
+    func byDirection(_ direction: Direction) async throws -> [Category] {
+        let allCategories = try await all()
+        return allCategories.filter { $0.direction == direction }
+    }
+}
+
+extension CategoriesService {
+    func getCategory(withId id: Int) async throws -> Category {
+        let categories: [Category] = try await all()
+        guard let category = categories.first(where: { $0.id == id }) else {
+            throw NSError(domain: "CategoriesService", code: 404, userInfo: [
+                NSLocalizedDescriptionKey: "Категория с id \(id) не найдена"
+            ])
+        }
+        return category
     }
 }

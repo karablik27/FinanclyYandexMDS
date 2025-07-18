@@ -22,12 +22,16 @@ private enum Constants {
 
 struct HistoryView: View {
 
-    // MARK: - Properties
-    @AppStorage("currencyCode") private var currencyCode: String = Currency.rub.rawValue
+    // MARK: - Dependencies
     let direction: Direction
+    let client: NetworkClient
+    let accountId: Int
+
+    @AppStorage("selectedCurrency") private var currencyCode: String = Currency.rub.rawValue
     @StateObject private var vm: HistoryViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var sortBy: SortOption = .date
+    @State private var activeForm: AddTransactionForm?
 
     private let df: DateFormatter = {
         let f = DateFormatter()
@@ -37,100 +41,108 @@ struct HistoryView: View {
     }()
 
     // MARK: - Init
-    init(direction: Direction) {
+    init(direction: Direction, client: NetworkClient, accountId: Int) {
         self.direction = direction
-        _vm = StateObject(wrappedValue: HistoryViewModel(direction: direction))
+        self.client = client
+        self.accountId = accountId
+        _vm = StateObject(wrappedValue: HistoryViewModel(direction: direction, client: client, accountId: accountId))
     }
 
     // MARK: - Body
     var body: some View {
         NavigationStack {
-            VStack(spacing: Constants.sectionSpacing) {
+            ZStack {
+                if vm.isLoading {
+                    LoadingView()
+                } else {
+                    VStack(spacing: Constants.sectionSpacing) {
 
-                // MARK: - Header
-                Text("Моя история")
-                    .font(.largeTitle.bold())
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, Constants.horizontalPadding)
+                        // MARK: - Header
+                        Text("Моя история")
+                            .font(.largeTitle.bold())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, Constants.horizontalPadding)
 
-                // MARK: - Period & Summary Section
-                VStack(spacing: 0) {
-                    periodRow(
-                        title: "Начало",
-                        date: Binding(
-                            get: { vm.startDate },
-                            set: { new in
-                                vm.startDate = new
-                                if new > vm.endDate { vm.endDate = new }
-                                Task { await vm.load() }
-                            }
-                        )
-                    )
-                    Divider()
-                    periodRow(
-                        title: "Конец",
-                        date: Binding(
-                            get: { vm.endDate },
-                            set: { new in
-                                vm.endDate = new
-                                if new < vm.startDate { vm.startDate = new }
-                                Task { await vm.load() }
-                            }
-                        )
-                    )
-                    Divider()
-                    HStack {
-                        Text("Сортировка").font(.body)
-                        Spacer()
-                        Picker("", selection: $sortBy) {
-                            ForEach(SortOption.allCases) { option in
-                                Text(option.rawValue).tag(option)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: Constants.segmentPickerWidth)
-                    }
-                    .padding(.vertical, Constants.periodVerticalDividerPadding)
-                    .padding(.horizontal, Constants.horizontalPadding)
-                    Divider()
-                    HStack {
-                        Text("Сумма")
-                        Spacer()
-                        Text(
-                            vm.total.formatted(
-                                .currency(code: currencyCode)
-                                    .locale(Locale(identifier: "ru_RU"))
-                                    .precision(.fractionLength(0))
+                        // MARK: - Period & Summary Section
+                        VStack(spacing: 0) {
+                            periodRow(
+                                title: "Начало",
+                                date: Binding(
+                                    get: { vm.startDate },
+                                    set: { new in
+                                        vm.startDate = new
+                                        if new > vm.endDate { vm.endDate = new }
+                                        Task { await vm.load() }
+                                    }
+                                )
                             )
-                        )
-                    }
-                    .padding(.vertical, Constants.amountSectionVerticalPadding)
-                    .padding(.horizontal, Constants.horizontalPadding)
-                }
-                .background(Color(.systemBackground))
-                .cornerRadius(Constants.periodRowCornerRadius)
-                .padding(.horizontal, Constants.horizontalPadding)
-
-                // MARK: - Operations Header
-                Text("ОПЕРАЦИИ")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, Constants.horizontalPadding)
-
-                // MARK: - Operations List
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(sortedTransactions, id: \.id) { tx in
-                            operationRow(tx)
+                            Divider()
+                            periodRow(
+                                title: "Конец",
+                                date: Binding(
+                                    get: { vm.endDate },
+                                    set: { new in
+                                        vm.endDate = new
+                                        if new < vm.startDate { vm.startDate = new }
+                                        Task { await vm.load() }
+                                    }
+                                )
+                            )
+                            Divider()
+                            HStack {
+                                Text("Сортировка").font(.body)
+                                Spacer()
+                                Picker("", selection: $sortBy) {
+                                    ForEach(SortOption.allCases) { option in
+                                        Text(option.rawValue).tag(option)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(width: Constants.segmentPickerWidth)
+                            }
+                            .padding(.vertical, Constants.periodVerticalDividerPadding)
+                            .padding(.horizontal, Constants.horizontalPadding)
+                            Divider()
+                            HStack {
+                                Text("Сумма")
+                                Spacer()
+                                Text(
+                                    vm.total.formatted(
+                                        .currency(code: currencyCode)
+                                            .locale(Locale(identifier: "ru_RU"))
+                                            .precision(.fractionLength(0))
+                                    )
+                                )
+                            }
+                            .padding(.vertical, Constants.amountSectionVerticalPadding)
+                            .padding(.horizontal, Constants.horizontalPadding)
                         }
-                    }
-                    .background(Color(.systemBackground))
-                    .cornerRadius(Constants.periodRowCornerRadius)
-                    .padding(.horizontal, Constants.horizontalPadding)
-                }
+                        .background(Color(.systemBackground))
+                        .cornerRadius(Constants.periodRowCornerRadius)
+                        .padding(.horizontal, Constants.horizontalPadding)
 
-                Spacer(minLength: Constants.sectionSpacing)
+                        // MARK: - Operations Header
+                        Text("ОПЕРАЦИИ")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, Constants.horizontalPadding)
+
+                        // MARK: - Operations List
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(sortedTransactions, id: \.id) { tx in
+                                    operationRow(tx)
+                                }
+                            }
+                            .background(Color(.systemBackground))
+                            .cornerRadius(Constants.periodRowCornerRadius)
+                            .padding(.horizontal, Constants.horizontalPadding)
+                        }
+
+                        Spacer(minLength: Constants.sectionSpacing)
+                    }
+                }
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .toolbar {
@@ -147,7 +159,11 @@ struct HistoryView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     NavigationLink {
-                        AnalysisViewControllerWrapper(direction: direction)
+                        AnalysisViewControllerWrapper(
+                                service: TransactionsService(client: client),
+                                accountId: accountId,
+                                direction: direction
+                            )
                             .edgesIgnoringSafeArea(.top)
                             .navigationBarBackButtonHidden(true)
                     } label: {
@@ -158,6 +174,22 @@ struct HistoryView: View {
             }
         }
         .navigationBarBackButtonHidden(true)
+        .fullScreenCover(item: $activeForm) { form in
+            AddTransactionView(mode: form, client: client, accountId: accountId)
+        }
+        .onChange(of: activeForm) {
+            if $1 == nil {
+                Task { await vm.load() }
+            }
+        }
+        .alert("Ошибка", isPresented: Binding(
+            get: { vm.alertError != nil },
+            set: { _ in vm.alertError = nil }
+        )) {
+            Button("Ок", role: .cancel) { }
+        } message: {
+            Text(vm.alertError ?? "")
+        }
     }
 
     // MARK: - Sorted Transactions
@@ -201,36 +233,41 @@ struct HistoryView: View {
     // MARK: - Operation Row
     @ViewBuilder
     private func operationRow(_ tx: Transaction) -> some View {
-        HStack(spacing: Constants.operationRowSpacing) {
-            Circle()
-                .fill(Color.accentColor.opacity(0.2))
-                .frame(width: Constants.operationIconSize, height: Constants.operationIconSize)
-                .overlay(Text(String(tx.category.emoji)).font(.body))
+        Button {
+            activeForm = .edit(transaction: tx)
+        } label: {
+            HStack(spacing: Constants.operationRowSpacing) {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.2))
+                    .frame(width: Constants.operationIconSize, height: Constants.operationIconSize)
+                    .overlay(Text(String(tx.category.emoji)).font(.body))
 
-            VStack(alignment: .leading, spacing: Constants.captionSpacing) {
-                Text(tx.category.name).font(.body)
-                if let c = tx.comment {
-                    Text(c).font(.caption2).foregroundColor(.gray)
+                VStack(alignment: .leading, spacing: Constants.captionSpacing) {
+                    Text(tx.category.name).font(.body)
+                    if let c = tx.comment {
+                        Text(c).font(.caption2).foregroundColor(.gray)
+                    }
                 }
-            }
 
-            Spacer()
+                Spacer()
 
-            Text(
-                tx.amount.formatted(
-                    .currency(code: currencyCode)
-                        .locale(Locale(identifier: "ru_RU"))
-                        .precision(.fractionLength(0))
+                Text(
+                    tx.amount.formatted(
+                        .currency(code: currencyCode)
+                            .locale(Locale(identifier: "ru_RU"))
+                            .precision(.fractionLength(0))
+                    )
                 )
-            )
-            .font(.body)
+                .font(.body)
 
-            Image(systemName: "chevron.right")
-                .font(.caption2)
-                .foregroundColor(.gray)
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+            .padding(.vertical, Constants.operationRowVerticalPadding)
+            .padding(.horizontal, Constants.operationIconOverlayPadding)
         }
-        .padding(.vertical, Constants.operationRowVerticalPadding)
-        .padding(.horizontal, Constants.operationIconOverlayPadding)
+        .buttonStyle(.plain)
         Divider().padding(.leading, Constants.dividerIndent)
     }
 }

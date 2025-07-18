@@ -1,18 +1,22 @@
 import Foundation
+import Combine
 
-final class AnalysisViewModel {
-    private let service = TransactionsService()
-    private let direction: Direction
+@MainActor
+final class AnalysisViewModel: ObservableObject {
+    let service: TransactionsService
+    let direction: Direction
+    let accountId: Int
 
-    private(set) var transactions: [Transaction] = []
-    private(set) var total: Decimal = 0
-
-    var startDate: Date {
+    @Published var transactions: [Transaction] = []
+    @Published var total: Decimal = 0
+    @Published var startDate: Date {
         didSet { load() }
     }
-    var endDate: Date {
+    @Published var endDate: Date {
         didSet { load() }
     }
+    @Published var isLoading: Bool = false
+    @Published var alertMessage: String?
 
     var sortOption: SortOption = .date {
         didSet { sortTransactions() }
@@ -20,30 +24,35 @@ final class AnalysisViewModel {
 
     var onUpdate: (() -> Void)?
 
-    init(direction: Direction) {
+    init(service: TransactionsService, accountId: Int, direction: Direction) {
+        self.service = service
+        self.accountId = accountId
         self.direction = direction
+
         let now = Date()
-        self.endDate = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: now)!
-        let oneMonthAgo = Calendar.current.date(byAdding: .month, value: -1, to: now)!
-        self.startDate = Calendar.current.startOfDay(for: oneMonthAgo)
+        self.endDate = now.endOfDay()
+        self.startDate = Calendar.current.date(byAdding: .month, value: -1, to: now)!.startOfDay()
+
         load()
     }
 
-    private func load() {
-        Task.detached { [weak self] in
-            guard let self else { return }
+    func load() {
+        isLoading = true
+        Task {
+            defer { isLoading = false }
 
-            let all = await service.getTransactions(
-                from: startDate.startOfDay(),
-                to: endDate.endOfDay()
-            )
-            let filtered = all.filter { $0.category.direction == self.direction }
-            let newTotal = filtered.reduce(Decimal(0)) { $0 + $1.amount }
-
-            await MainActor.run {
+            do {
+                let all = try await service.getTransactions(
+                    forAccount: accountId,
+                    from: startDate,
+                    to: endDate
+                )
+                let filtered = all.filter { $0.category.direction == direction }
                 self.transactions = filtered
-                self.total = newTotal
-                self.sortTransactions()
+                self.total = filtered.reduce(Decimal(0)) { $0 + $1.amount }
+                sortTransactions()
+            } catch {
+                alertMessage = "Не удалось загрузить данные: \(error.localizedDescription)"
             }
         }
     }
@@ -56,18 +65,5 @@ final class AnalysisViewModel {
             transactions.sort(by: { $0.amount > $1.amount })
         }
         onUpdate?()
-    }
-
-}
-
-private extension Date {
-    func startOfDay() -> Date {
-        Calendar.current.startOfDay(for: self)
-    }
-
-    func endOfDay() -> Date {
-        Calendar.current.date(
-            bySettingHour: 23, minute: 59, second: 59, of: self
-        )!
     }
 }

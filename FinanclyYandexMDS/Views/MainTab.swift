@@ -1,9 +1,15 @@
 import SwiftUI
 
 struct MainTab: View {
-    
+    // MARK: - Dependencies
+    let client: NetworkClient
+    let accountId: Int
+
     // MARK: - Init
-    init() {
+    init(client: NetworkClient, accountId: Int) {
+        self.client = client
+        self.accountId = accountId
+
         let appearance = UITabBarAppearance()
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = UIColor.white
@@ -13,11 +19,10 @@ struct MainTab: View {
     }
 
     // MARK: - Body
-    
     var body: some View {
         TabView {
             // MARK: - Expenses Tab
-            TransactionsListView(direction: .outcome)
+            TransactionsListView(direction: .outcome, client: client, accountId: accountId)
                 .tabItem {
                     Label {
                         Text("Расходы")
@@ -28,7 +33,7 @@ struct MainTab: View {
                 }
 
             // MARK: - Income Tab
-            TransactionsListView(direction: .income)
+            TransactionsListView(direction: .income, client: client, accountId: accountId)
                 .tabItem {
                     Label {
                         Text("Доходы")
@@ -39,7 +44,7 @@ struct MainTab: View {
                 }
 
             // MARK: - Account Tab
-            BankAccountView()
+            BankAccountView(client: client)
                 .tabItem {
                     Label {
                         Text("Счет")
@@ -50,7 +55,7 @@ struct MainTab: View {
                 }
 
             // MARK: - Categories Tab
-            CategoriesView()
+            CategoriesView(client: client)
                 .tabItem {
                     Label {
                         Text("Статьи")
