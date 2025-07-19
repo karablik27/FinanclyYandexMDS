@@ -5,39 +5,34 @@ import SwiftData
 final class CategoriesLocalSwiftDataStore: CategoriesLocalStore {
     private let container: ModelContainer
 
-    init(container: ModelContainer) {
-        self.container = container
-    }
+    init(container: ModelContainer) { self.container = container }
 
     func saveAll(_ categories: [Category]) async throws {
-        let context = container.mainContext
+        let ctx = container.mainContext
 
-        for category in categories {
-            let descriptor = FetchDescriptor<CategoryEntity>(
-                predicate: #Predicate { $0.id == category.id }
+        for cat in categories {
+            let desc = FetchDescriptor<CategoryEntity>(
+                predicate: #Predicate { $0.id == cat.id }
             )
-
-            if let existing = try context.fetch(descriptor).first {
-                existing.name = category.name
-                existing.emoji = String(category.emoji)
-                existing.direction = category.isIncome
+            if let e = try ctx.fetch(desc).first {
+                e.name      = cat.name
+                e.emoji     = String(cat.emoji)
+                e.direction = cat.isIncome
             } else {
-                let entity = CategoryEntity(
-                    id: category.id,
-                    name: category.name,
-                    emoji: String(category.emoji),
-                    direction: category.isIncome
+                ctx.insert(
+                    CategoryEntity(id: cat.id,
+                                   name: cat.name,
+                                   emoji: String(cat.emoji),
+                                   direction: cat.isIncome)
                 )
-                context.insert(entity)
             }
         }
-
-        try context.save()
+        try ctx.save()
     }
 
     func getAll() async throws -> [Category] {
-        let context = container.mainContext
-        let entities = try context.fetch(FetchDescriptor<CategoryEntity>())
+        let ctx = container.mainContext
+        let entities = try ctx.fetch(FetchDescriptor<CategoryEntity>())
         return entities.map { $0.toModel() }
     }
 }

@@ -2,6 +2,7 @@ enum BackupAction: String, Codable {
     case create
     case update
     case delete
+    case balance  
 }
 
 struct TransactionBackup: Identifiable, Codable {

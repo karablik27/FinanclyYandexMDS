@@ -75,13 +75,17 @@ final class TransactionsSwiftDataStore: TransactionsLocalStore {
         try context.save()
     }
 
+    
     func update(_ transaction: Transaction) async throws {
-        let context = container.mainContext
+        let context    = container.mainContext
         let descriptor = FetchDescriptor<TransactionEntity>(
             predicate: #Predicate { $0.id == transaction.id }
         )
 
-        guard let entity = try context.fetch(descriptor).first else { return }
+        guard let entity = try context.fetch(descriptor).first else {
+            try await create(transaction)
+            return
+        }
 
         entity.amount = transaction.amount
         entity.transactionDate = transaction.transactionDate
@@ -93,7 +97,7 @@ final class TransactionsSwiftDataStore: TransactionsLocalStore {
     }
 
     func delete(by id: Int) async throws {
-        let context = container.mainContext
+        let context    = container.mainContext
         let descriptor = FetchDescriptor<TransactionEntity>(
             predicate: #Predicate { $0.id == id }
         )

@@ -85,7 +85,7 @@ final class NetworkClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = 5
+        request.timeoutInterval = 4
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         if !token.isEmpty {

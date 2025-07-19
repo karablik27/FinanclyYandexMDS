@@ -1,183 +1,318 @@
 import Foundation
 
+// MARK: – TransactionsService
+@MainActor
 final class TransactionsService {
-    // MARK: - Dependencies
-    let client: NetworkClient
-    private let fileCache: TransactionsFileCache
-    private let fileURL: URL
-    private let localStore: TransactionsLocalStore?
-    private let backupStore: TransactionsBackupStore?
 
-    // MARK: - Init
+    // MARK: Deps
+    let client: NetworkClient
+    private let fileCache = TransactionsFileCache()
+    private let fileURL:  URL
+
+    private let localStore:    TransactionsLocalStore?
+    private let backupStore:   TransactionsBackupStore?
+    private let accountsLocalStore:  BankAccountsLocalStore?
+    private let accountsBackupStore: AccountBalanceBackupStore?
+    private let categoriesLocalStore: CategoriesLocalStore?
+
+    // MARK: Init
     init(
         client: NetworkClient,
         localStore: TransactionsLocalStore? = nil,
         backupStore: TransactionsBackupStore? = nil,
+        accountsStore: BankAccountsLocalStore? = nil,
+        accBackupStore: AccountBalanceBackupStore? = nil,
+        categoriesStore: CategoriesLocalStore? = nil,
         fileName: String = "transactions"
     ) {
-        self.client = client
-        self.localStore = localStore
-        self.backupStore = backupStore
-        self.fileCache = TransactionsFileCache()
+        self.client               = client
+        self.localStore           = localStore
+        self.backupStore          = backupStore
+        self.accountsLocalStore   = accountsStore
+        self.accountsBackupStore  = accBackupStore
+        self.categoriesLocalStore = categoriesStore
+
         self.fileURL = TransactionsFileCache.defaultFileURL(fileName: fileName)
-
         try? fileCache.load(from: fileURL)
     }
 
-    // MARK: - Cached
-    var cachedTransactions: [Transaction] {
-        fileCache.transactions
-    }
+    // MARK: Cache helpers
+    var cachedTransactions: [Transaction] { fileCache.transactions }
+    func refreshFromCache() { try? fileCache.load(from: fileURL) }
 
-    func refreshFromCache() {
-        try? fileCache.load(from: fileURL)
-    }
+    // MARK: Load
+    func getTransactions(
+        forAccount accId: Int,
+        from start: Date,
+        to end: Date
+    ) async throws -> [Transaction] {
 
-    // MARK: - Load
-    func getTransactions(forAccount accountId: Int, from start: Date, to end: Date) async throws -> [Transaction] {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        try await syncBackupWithRemote()
 
-        let queryItems = [
-            URLQueryItem(name: "startDate", value: formatter.string(from: start)),
-            URLQueryItem(name: "endDate", value: formatter.string(from: end))
-        ]
+        let path = "transactions/account/\(accId)/period"
+        let q    = DateFormatter.yyyyMMddQuery(start: start, end: end)
 
-        let path = "transactions/account/\(accountId)/period"
-
-        // Попытка синхронизации бэкапа
-        if let backupStore {
-            let backups = try await backupStore.getAll()
-            for backup in backups {
-                do {
-                    switch backup.action {
-                    case .create:
-                        let oldId = backup.transaction.id
-                        let newTx = TransactionRequestBody(from: backup.transaction)
-                        let created = try await createTransaction(newTx)
-                        try? await localStore?.delete(by: oldId)
-                        try? await backupStore.delete(by: oldId)
-                    case .update:
-                        _ = try await updateTransaction(id: backup.transaction.id, with: TransactionRequestBody(from: backup.transaction))
-                        try? await backupStore.delete(by: backup.transaction.id)
-                    case .delete:
-                        try await deleteTransaction(id: backup.transaction.id)
-                        try? await backupStore.delete(by: backup.transaction.id)
-                    }
-                } catch {
-                    print("Failed to sync backup transaction \(backup.transaction.id): \(error.localizedDescription)")
-                }
-            }
-        }
-
-        do {
-            let txs: [Transaction] = try await client.request(
-                path: path,
-                method: "GET",
+        do {   // --- online ---
+            let remote: [Transaction] = try await client.request(
+                path: path, method: "GET",
                 body: Optional<EmptyRequest>.none,
-                queryItems: queryItems
+                queryItems: q
             )
-            fileCache.replaceAll(txs)
+            fileCache.replaceAll(remote)
             try? fileCache.save(to: fileURL)
-            try? await localStore?.replaceAll(txs)
-            return txs
-        } catch {
-            let local = try await localStore?.getAll() ?? []
+            try? await localStore?.replaceAll(remote)
+            return remote
+        } catch { // --- offline ---
+            let local  = try await localStore?.getAll() ?? []
             let backup = try await backupStore?.getAll().map { $0.transaction } ?? []
-            let merged = (local + backup).filter {
-                $0.account.id == accountId && $0.transactionDate >= start && $0.transactionDate <= end
+            return Self.dedup(local + backup).filter {
+                $0.account.id == accId &&
+                $0.transactionDate >= start &&
+                $0.transactionDate <= end
             }
-            return merged
         }
     }
 
-    // MARK: - Create
-    func createTransaction(_ tx: TransactionRequestBody) async throws -> Transaction {
-        do {
-            let response: TransactionResponseBody = try await client.request(
-                path: "transactions",
-                method: "POST",
-                body: tx
+    // MARK: Create
+    func createTransaction(_ body: TransactionRequestBody) async throws -> Transaction {
+        do {   // online
+            let resp: TransactionResponseBody = try await client.request(
+                path: "transactions", method: "POST", body: body
             )
+            let tx = try await mapResponse(resp)
 
-            let account = try await BankAccountsService(client: client).getAccount(withId: response.accountId)
-            let category = try await CategoriesService(client: client).getCategory(withId: response.categoryId)
-            let formatter = ISO8601DateFormatter()
+            try? await localStore?.create(tx)
+            try? await accountsLocalStore?.apply(delta: tx.signedAmount, to: tx.account.id)
+            try? await backupStore?.delete(by: tx.id)
+            return tx
 
-            let transaction = Transaction(
-                id: response.id,
-                account: account,
-                category: category,
-                amount: Decimal(string: response.amount) ?? 0,
-                transactionDate: formatter.date(from: response.transactionDate) ?? Date(),
-                comment: response.comment,
-                createdAt: formatter.date(from: response.createdAt) ?? Date(),
-                updatedAt: formatter.date(from: response.updatedAt) ?? Date()
+        } catch { // offline
+            let tempId   = Int(Date().timeIntervalSince1970 * -1)
+            let dummyTx  = await makeOfflineStub(id: tempId, from: body)
+
+            try? await localStore?.create(dummyTx)
+            try? await backupStore?.save(
+                TransactionBackupModel(id: tempId, action: .create, transaction: dummyTx)
             )
-
-            fileCache.add(transaction)
-            try? fileCache.save(to: fileURL)
-            try? await localStore?.create(transaction)
-            try? await backupStore?.delete(by: transaction.id)
-            return transaction
-        } catch {
-            let tempId = Int(Date().timeIntervalSince1970 * -1)
-            let dummy = Transaction(
-                id: tempId,
-                account: .dummy,
-                category: .dummy,
-                amount: Decimal(string: tx.amount) ?? 0,
-                transactionDate: ISO8601DateFormatter().date(from: tx.transactionDate) ?? Date(),
-                comment: tx.comment,
-                createdAt: Date(),
-                updatedAt: Date()
+            try? await accountsLocalStore?.apply(delta: dummyTx.signedAmount, to: body.accountId)
+            try? await accountsBackupStore?.add(
+                AccountBalanceBackupModel(accountId: body.accountId,
+                                          delta: dummyTx.signedAmount)
             )
-            try? await localStore?.create(dummy)
-            try? await backupStore?.save(TransactionBackupModel(id: tempId, action: .create, transaction: dummy))
-            throw error
+            return dummyTx
         }
     }
 
-    // MARK: - Update
-    func updateTransaction(id: Int, with tx: TransactionRequestBody) async throws -> Transaction {
-        do {
-            let updated: Transaction = try await client.request(
-                path: "transactions/\(id)",
-                method: "PUT",
-                body: tx
+    // MARK: Update
+    func updateTransaction(id: Int, with body: TransactionRequestBody) async throws -> Transaction {
+        let oldTx = try await localStore?.get(by: id)
+
+        do {   // online
+            let new: Transaction = try await client.request(
+                path: "transactions/\(id)", method: "PUT", body: body
             )
 
-            fileCache.remove(withId: id)
-            fileCache.add(updated)
-            try? fileCache.save(to: fileURL)
-            try? await localStore?.update(updated)
+            let delta = new.signedAmount - (oldTx?.signedAmount ?? 0)
+            try? await accountsLocalStore?.apply(delta: delta, to: body.accountId)
+
+            try? await localStore?.update(new)
             try? await backupStore?.delete(by: id)
-            return updated
-        } catch {
-            try? await backupStore?.save(TransactionBackupModel(id: id, action: .update, transaction: Transaction(from: tx, id: id)))
-            throw error
+            return new
+
+        } catch { // offline
+            let dummyTx = await makeOfflineStub(id: id, from: body)
+
+            let delta = dummyTx.signedAmount - (oldTx?.signedAmount ?? 0)
+            try? await accountsLocalStore?.apply(delta: delta, to: body.accountId)
+            try? await accountsBackupStore?.add(
+                AccountBalanceBackupModel(accountId: body.accountId, delta: delta)
+            )
+
+            try? await localStore?.update(dummyTx)
+            try? await backupStore?.save(
+                TransactionBackupModel(id: id, action: .update, transaction: dummyTx)
+            )
+            return dummyTx
         }
     }
 
-    // MARK: - Delete
+    // MARK: Delete
     func deleteTransaction(id: Int) async throws {
-        do {
-            _ = try await client.request(
-                path: "transactions/\(id)",
-                method: "DELETE",
-                body: EmptyRequest()
+        let oldTx = try await localStore?.get(by: id)
+
+        do {   // online
+            try await client.request(
+                path: "transactions/\(id)", method: "DELETE", body: EmptyRequest()
             ) as Void
 
-            fileCache.remove(withId: id)
-            try? fileCache.save(to: fileURL)
+            if let oldTx {
+                try? await accountsLocalStore?.apply(delta: -oldTx.signedAmount,
+                                                     to: oldTx.account.id)
+            }
             try? await localStore?.delete(by: id)
             try? await backupStore?.delete(by: id)
-        } catch {
-            let dummy = Transaction(id: id, account: .dummy, category: .dummy, amount: 0, transactionDate: Date(), comment: nil, createdAt: Date(), updatedAt: Date())
-            try? await backupStore?.save(TransactionBackupModel(id: id, action: .delete, transaction: dummy))
+
+        } catch { // offline
+            if let oldTx {
+                try? await accountsLocalStore?.apply(delta: -oldTx.signedAmount,
+                                                     to: oldTx.account.id)
+                try? await accountsBackupStore?.add(
+                    AccountBalanceBackupModel(accountId: oldTx.account.id,
+                                              delta: -oldTx.signedAmount)
+                )
+            }
+            let stub = Transaction(id: id, account: .dummy, category: .dummy,
+                                   amount: 0, transactionDate: Date(),
+                                   comment: nil, createdAt: Date(), updatedAt: Date())
+            try? await backupStore?.save(
+                TransactionBackupModel(id: id, action: .delete, transaction: stub)
+            )
+            try? await localStore?.delete(by: id)
             throw error
         }
+    }
+
+    // MARK: makeOfflineStub
+    private func makeOfflineStub(
+        id: Int,
+        from body: TransactionRequestBody
+    ) async -> Transaction {
+        var isIncome = false
+        if let cats = try? await categoriesLocalStore?.getAll(),
+           let cat  = cats.first(where: { $0.id == body.categoryId }) {
+            isIncome = cat.isIncome
+        }
+
+        let stubAccount = BankAccount(
+            id: body.accountId,
+            name: "Offline",
+            balance: 0,
+            currency: ""
+        )
+        let stubCategory = Category(
+            id: body.categoryId,
+            name: "Offline",
+            emoji: "❓",
+            isIncome: isIncome
+        )
+
+        return Transaction(
+            id: id,
+            account: stubAccount,
+            category: stubCategory,
+            amount: Decimal(string: body.amount,
+                            locale: Locale(identifier: "en_US_POSIX")) ?? 0,
+            transactionDate: ISO8601DateFormatter()
+                .date(from: body.transactionDate) ?? Date(),
+            comment: body.comment,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+    }
+
+
+
+
+
+    // MARK: mapResponse
+    private func mapResponse(_ r: TransactionResponseBody) async throws -> Transaction {
+        let acc = try await BankAccountsService(client: client).getAccount(withId: r.accountId)
+        let cat = try await CategoriesService(client: client).getCategory(withId: r.categoryId)
+        let fmt = ISO8601DateFormatter()
+
+        return Transaction(
+            id: r.id,
+            account: acc,
+            category: cat,
+            amount: Decimal(string: r.amount) ?? 0,
+            transactionDate: fmt.date(from: r.transactionDate) ?? Date(),
+            comment: r.comment,
+            createdAt: fmt.date(from: r.createdAt) ?? Date(),
+            updatedAt: fmt.date(from: r.updatedAt) ?? Date()
+        )
+    }
+
+    // MARK: Sync backup  remote
+    private func syncBackupWithRemote() async throws {
+        guard let backupStore else { return }
+
+        // --- транзакции ---
+        for backup in try await backupStore.getAll() {
+            do {
+                switch backup.action {
+                case .create:
+                    let oldId = backup.transaction.id
+                    try? await localStore?.delete(by: oldId)
+                    fileCache.remove(withId: oldId); try? fileCache.save(to: fileURL)
+
+                    // отдельный POST без рекурсии
+                    let resp: TransactionResponseBody = try await client.request(
+                        path: "transactions",
+                        method: "POST",
+                        body: TransactionRequestBody(from: backup.transaction)
+                    )
+                    let newTx = try await mapResponse(resp)
+                    try? await localStore?.create(newTx)
+                    try? await accountsLocalStore?.apply(delta: newTx.signedAmount,
+                                                         to: newTx.account.id)
+
+                case .update:
+                    _ = try await updateTransaction(
+                        id: backup.transaction.id,
+                        with: TransactionRequestBody(from: backup.transaction)
+                    )
+                case .delete:
+                    try await deleteTransaction(id: backup.transaction.id)
+                case .balance:
+                    break
+                }
+                try? await backupStore.delete(backup)
+            } catch {
+                print("Tx sync fail \(backup.id): \(error)")
+            }
+        }
+
+        // --- балансы ---
+        for bal in try await accountsBackupStore?.all() ?? [] {
+            do {
+                if let acc = try await accountsLocalStore?.getAll()
+                    .first(where: { $0.id == bal.accountId }) {
+
+                    struct Patch: Encodable {
+                        let name: String
+                        let balance: String
+                        let currency: String
+                    }
+                    _ = try await client.request(
+                        path: "accounts/\(acc.id)",
+                        method: "PUT",
+                        body: Patch(name: acc.name,
+                                    balance: "\(acc.balance)",
+                                    currency: acc.currency)
+                    ) as BankAccount
+                    try? await accountsBackupStore?.delete(bal)
+                }
+            } catch { print("Balance sync fail \(bal.accountId): \(error)") }
+        }
+    }
+
+    // MARK: util–dedup
+    private static func dedup(_ array: [Transaction]) -> [Transaction] {
+        Dictionary(grouping: array, by: \.id)
+            .values
+            .compactMap { $0.max(by: { $0.updatedAt < $1.updatedAt }) } // берём свежую
+    }
+}
+
+fileprivate extension DateFormatter {
+    static func yyyyMMddQuery(start: Date, end: Date) -> [URLQueryItem] {
+        let f = DateFormatter()
+        f.timeZone = .init(secondsFromGMT: 0)
+        f.locale   = .init(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return [
+            .init(name: "startDate", value: f.string(from: start)),
+            .init(name: "endDate",   value: f.string(from: end))
+        ]
     }
 }

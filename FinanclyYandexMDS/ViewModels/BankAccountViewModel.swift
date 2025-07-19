@@ -59,19 +59,16 @@ final class BankAccountViewModel: ObservableObject {
     }
 
     private func saveToLocal(_ acc: BankAccount) async throws {
-        // Проверяем, есть ли уже сущность с таким id
         let descriptor = FetchDescriptor<AccountEntity>(
             predicate: #Predicate { $0.id == acc.id }
         )
         let existing = try modelContext.fetch(descriptor).first
 
         if let existing = existing {
-            // Обновляем поля
             existing.name = acc.name
             existing.balance = acc.balance
             existing.currency = acc.currency
         } else {
-            // Вставляем новую
             let entity = AccountEntity(
                 id: acc.id,
                 name: acc.name,

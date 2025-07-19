@@ -10,62 +10,80 @@ struct Transaction: Codable {
     let createdAt: Date
     let updatedAt: Date
 
+    // MARK: – Coding keys
     private enum CodingKeys: String, CodingKey {
         case id, account, category, amount, transactionDate, comment, createdAt, updatedAt
     }
 
+    // MARK: – ISO‑8601 helpers
+    private static let isoWithFraction: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoNoFraction: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static func parseISO(_ s: String) -> Date? {
+        isoWithFraction.date(from: s) ?? isoNoFraction.date(from: s)
+    }
+
+    // MARK: – Decoding
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
 
-        id = try container.decode(Int.self, forKey: .id)
-        account = try container.decode(BankAccount.self, forKey: .account)
-        category = try container.decode(Category.self, forKey: .category)
+        id       = try c.decode(Int.self,          forKey: .id)
+        account  = try c.decode(BankAccount.self,  forKey: .account)
+        category = try c.decode(Category.self,     forKey: .category)
 
-        let amountString = try container.decode(String.self, forKey: .amount)
-        guard let decimalAmount = Decimal(string: amountString) else {
-            throw DecodingError.dataCorruptedError(forKey: .amount, in: container, debugDescription: "Invalid decimal amount string.")
+        let amtStr = try c.decode(String.self, forKey: .amount)
+        guard let amt = Decimal(string: amtStr,
+                                locale: Locale(identifier: "en_US_POSIX")) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .amount, in: c,
+                debugDescription: "Invalid decimal: \(amtStr)"
+            )
         }
-        amount = decimalAmount
+        amount = amt
 
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        // даты
+        let txStr  = try c.decode(String.self, forKey: .transactionDate)
+        let crStr  = try c.decode(String.self, forKey: .createdAt)
+        let upStr  = try c.decode(String.self, forKey: .updatedAt)
 
-        let transactionDateString = try container.decode(String.self, forKey: .transactionDate)
-        let createdAtString       = try container.decode(String.self, forKey: .createdAt)
-        let updatedAtString       = try container.decode(String.self, forKey: .updatedAt)
-
-        guard let txDate = formatter.date(from: transactionDateString) else {
-            throw DecodingError.dataCorruptedError(forKey: .transactionDate, in: container, debugDescription: "Invalid date string.")
-        }
-        guard let created = formatter.date(from: createdAtString) else {
-            throw DecodingError.dataCorruptedError(forKey: .createdAt, in: container, debugDescription: "Invalid date string.")
-        }
-        guard let updated = formatter.date(from: updatedAtString) else {
-            throw DecodingError.dataCorruptedError(forKey: .updatedAt, in: container, debugDescription: "Invalid date string.")
+        guard
+            let txDate = Transaction.parseISO(txStr),
+            let crDate = Transaction.parseISO(crStr),
+            let upDate = Transaction.parseISO(upStr)
+        else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .transactionDate, in: c,
+                debugDescription: "Bad ISO‑8601 format"
+            )
         }
 
         transactionDate = txDate
-        createdAt = created
-        updatedAt = updated
-
-        comment = try container.decodeIfPresent(String.self, forKey: .comment)
+        createdAt       = crDate
+        updatedAt       = upDate
+        comment         = try c.decodeIfPresent(String.self, forKey: .comment)
     }
 
+    // MARK: – Encoding
     func encode(to encoder: Encoder) throws {
-        var container = try encoder.container(keyedBy: CodingKeys.self)
+        var c = encoder.container(keyedBy: CodingKeys.self)
 
-        try container.encode(id, forKey: .id)
-        try container.encode(account, forKey: .account)
-        try container.encode(category, forKey: .category)
-        try container.encode("\(amount)", forKey: .amount)
+        try c.encode(id,       forKey: .id)
+        try c.encode(account,  forKey: .account)
+        try c.encode(category, forKey: .category)
+        try c.encode("\(amount)", forKey: .amount)
 
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        try container.encode(formatter.string(from: transactionDate), forKey: .transactionDate)
-        try container.encode(formatter.string(from: createdAt), forKey: .createdAt)
-        try container.encode(formatter.string(from: updatedAt), forKey: .updatedAt)
-        try container.encodeIfPresent(comment, forKey: .comment)
+        let f = Transaction.isoWithFraction
+        try c.encode(f.string(from: transactionDate), forKey: .transactionDate)
+        try c.encode(f.string(from: createdAt),       forKey: .createdAt)
+        try c.encode(f.string(from: updatedAt),       forKey: .updatedAt)
+        try c.encodeIfPresent(comment,                forKey: .comment)
     }
 }
 
@@ -97,11 +115,18 @@ extension Transaction {
             id: id,
             account: .dummy,
             category: .dummy,
-            amount: Decimal(string: request.amount) ?? 0,
-            transactionDate: ISO8601DateFormatter().date(from: request.transactionDate) ?? Date(),
+            amount: Decimal(string: request.amount,
+                            locale: Locale(identifier: "en_US_POSIX")) ?? 0,
+            transactionDate: Transaction.isoWithFraction.date(from: request.transactionDate) ?? Date(),
             comment: request.comment,
             createdAt: Date(),
             updatedAt: Date()
         )
+    }
+}
+
+extension Transaction {
+    var signedAmount: Decimal {
+        category.direction == .income ? amount : -amount
     }
 }
