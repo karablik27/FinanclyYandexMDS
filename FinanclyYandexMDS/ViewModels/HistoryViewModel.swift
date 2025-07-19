@@ -1,25 +1,41 @@
 import Foundation
-
-// MARK: - HistoryViewModel
+import SwiftData
 
 @MainActor
 final class HistoryViewModel: ObservableObject {
-    
-    // MARK: - Published Properties
-
     @Published var transactions: [Transaction] = []
     @Published var total: Decimal = 0
     @Published var startDate: Date
     @Published var endDate: Date
-
-    // MARK: - Private Properties
+    @Published var isLoading = false
+    @Published var alertError: String?
 
     private let direction: Direction
-    private let service = TransactionsService()
+    private let service: TransactionsService
+    private let accountId: Int
 
-    // MARK: - Init
-    init(direction: Direction) {
+    init(
+        direction: Direction,
+        client: NetworkClient,
+        accountId: Int,
+        modelContainer: ModelContainer
+    ) {
         self.direction = direction
+        self.accountId = accountId
+
+        // Local Store
+        let localStore: TransactionsLocalStore = TransactionsSwiftDataStore(container: modelContainer)
+
+        // Backup Store (optional)
+        let backupSchema = Schema([TransactionBackupModel.self])
+        let backupContainer = try? ModelContainer(for: backupSchema)
+        let backupStore: TransactionsBackupStore? = backupContainer.map { TransactionsBackupStore(container: $0) }
+
+        self.service = TransactionsService(
+            client: client,
+            localStore: localStore,
+            backupStore: backupStore
+        )
 
         let calendar = Calendar.current
         let now = Date()
@@ -30,27 +46,32 @@ final class HistoryViewModel: ObservableObject {
         Task { await load() }
     }
 
-    // MARK: - Data Loading
     func load() async {
-        let all = await service.getTransactions(
-            from: startDate.startOfDay(),
-            to: endDate.endOfDay()
-        )
-        let filtered = all.filter { $0.category.direction == direction }
-        transactions = filtered
-        total = filtered.reduce(0) { $0 + $1.amount }
-    }
-}
+        isLoading = true
+        defer { isLoading = false }
 
-// MARK: - Date Extension
-private extension Date {
-    func startOfDay() -> Date {
-        Calendar.current.startOfDay(for: self)
-    }
+        do {
+            let all = try await service.getTransactions(
+                forAccount: accountId,
+                from: startDate.startOfDay(),
+                to: endDate.endOfDay()
+            )
+            let filtered = all.filter { $0.category.direction == direction }
+            self.transactions = filtered
+            self.total = filtered.reduce(0) { $0 + $1.amount }
+        } catch {
+            print("⚠️ Ошибка при загрузке истории: \(error)")
+            alertError = "Не удалось загрузить операции: \(error.localizedDescription)"
 
-    func endOfDay() -> Date {
-        Calendar.current.date(
-            bySettingHour: 23, minute: 59, second: 59, of: self
-        )!
+            let cached = service.cachedTransactions
+            let filtered = cached.filter {
+                $0.transactionDate >= startDate &&
+                $0.transactionDate <= endDate &&
+                $0.account.id == accountId &&
+                $0.category.direction == direction
+            }
+            self.transactions = filtered
+            self.total = filtered.reduce(0) { $0 + $1.amount }
+        }
     }
 }

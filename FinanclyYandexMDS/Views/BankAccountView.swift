@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
+import SwiftData
 
-// MARK: - Constants
 private enum Constants {
     static let sidePadding: CGFloat = 16
     static let rowPadding: CGFloat = 12
@@ -10,57 +10,61 @@ private enum Constants {
     static let rowGap: CGFloat = 8
 }
 
-// MARK: - BankAccount View
 struct BankAccountView: View {
+    let client: NetworkClient
+    let modelContainer: ModelContainer
 
-    // Dependencies
-    @StateObject private var vm = BankAccountViewModel()
-
-    // State
-    @AppStorage("currencyCode") private var currencyCode = Currency.rub.rawValue
+    @StateObject private var vm: BankAccountViewModel
     @FocusState private var isFocused: Bool
     @State private var showCurrencyDialog = false
     @State private var hideBalance = true
 
-    // MARK: Body
+    init(client: NetworkClient, modelContainer: ModelContainer) {
+        self.client = client
+        self.modelContainer = modelContainer
+        _vm = StateObject(wrappedValue: BankAccountViewModel(client: client, modelContainer: modelContainer))
+    }
+
     var body: some View {
         NavigationView {
-            VStack(spacing: Constants.verticalGap) {
+            ZStack {
+                if vm.isLoading {
+                    LoadingView()
+                } else {
+                    VStack(spacing: Constants.verticalGap) {
+                        Text("Мой счёт")
+                            .font(.largeTitle.bold())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, Constants.sidePadding)
 
-                // Header
-                Text("Мой счёт")
-                    .font(.largeTitle.bold())
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, Constants.sidePadding)
-
-                // Rows + Pull-to-Refresh
-                ScrollView {
-                    VStack(spacing: Constants.rowGap) {
-                        balanceRow
-                        currencyRow
-                            .onTapGesture {
-                                if vm.isEditing { showCurrencyDialog = true }
+                        ScrollView {
+                            VStack(spacing: Constants.rowGap) {
+                                balanceRow
+                                currencyRow
+                                    .onTapGesture {
+                                        if vm.isEditing {
+                                            showCurrencyDialog = true
+                                        }
+                                    }
                             }
+                            .padding(.horizontal, Constants.sidePadding)
+                            .padding(.top, Constants.verticalGap)
+                        }
+                        .refreshable { await vm.loadAccount() }
                     }
-                    .padding(.horizontal, Constants.sidePadding)
-                    .padding(.top, Constants.verticalGap)
                 }
-                .refreshable { await vm.loadAccount() }
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
-
-            // Toolbar
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(vm.isEditing ? "Сохранить" : "Редактировать") {
-
-                        if vm.isEditing {                        // tapped “Save”
+                        if vm.isEditing {
                             UIApplication.shared.sendAction(
                                 #selector(UIResponder.resignFirstResponder),
                                 to: nil, from: nil, for: nil
                             )
-                            hideBalance = true                   // hide again
+                            hideBalance = true
                         }
                         vm.toggleEditing()
                         isFocused = false
@@ -68,25 +72,15 @@ struct BankAccountView: View {
                     .foregroundColor(Color(hex: "#6F5DB7"))
                 }
             }
-
-            // Currency picker dialog
-            .confirmationDialog(
-                "Валюта",
-                isPresented: $showCurrencyDialog,
-                titleVisibility: .visible
-            ) {
+            .confirmationDialog("Валюта", isPresented: $showCurrencyDialog, titleVisibility: .visible) {
                 ForEach(Currency.allCases) { cur in
                     Button(cur.displayName) {
-                        if cur.rawValue != currencyCode {
-                            currencyCode = cur.rawValue
-                        }
+                        vm.selectedCurrency = cur
                     }
                     .foregroundColor(Color(hex: "#6F5DB7"))
                 }
             }
             .tint(Color(hex: "#6F5DB7"))
-
-            // Swipe anywhere → hide keyboard
             .gesture(
                 DragGesture().onChanged { _ in
                     UIApplication.shared.sendAction(
@@ -95,8 +89,6 @@ struct BankAccountView: View {
                     )
                 }
             )
-
-            // Shake detector
             .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
                 withAnimation { hideBalance.toggle() }
             }
@@ -106,13 +98,24 @@ struct BankAccountView: View {
                     .id(vm.isEditing)
             )
         }
-        // Ensure balance is hidden when leaving edit mode
         .onChange(of: vm.isEditing) { _, editing in
             if !editing { hideBalance = true }
         }
+        .onAppear {
+            Task { await vm.loadAccount() }
+        }
+        .alert("Ошибка", isPresented: Binding(get: {
+            vm.alertError != nil
+        }, set: { _ in
+            vm.alertError = nil
+        })) {
+            Button("Ок", role: .cancel) {}
+        } message: {
+            Text(vm.alertError ?? "")
+        }
     }
 
-    // MARK: Balance Row
+    // MARK: - Balance Row
     private var balanceRow: some View {
         HStack {
             Text("💰 Баланс")
@@ -127,15 +130,13 @@ struct BankAccountView: View {
                         vm.balanceInput = vm.sanitize(new)
                     }
             } else {
-                Text(
-                    (vm.account?.balance ?? 0).formatted(
-                        .currency(code: currencyCode)
-                            .locale(Locale(identifier: "ru_RU"))
-                            .precision(.fractionLength(0))
-                    )
-                )
+                Text(vm.account?.balance.formatted(
+                    .currency(code: vm.selectedCurrency.rawValue)
+                        .locale(Locale(identifier: "ru_RU"))
+                        .precision(.fractionLength(0))
+                ) ?? "—")
                 .foregroundColor(.black)
-                .spoiler(isOn: $hideBalance)        // тг эффект лол
+                .spoiler(isOn: $hideBalance)
             }
         }
         .padding(Constants.rowPadding)
@@ -148,12 +149,12 @@ struct BankAccountView: View {
         .onTapGesture { if vm.isEditing { isFocused = true } }
     }
 
-    // MARK: Currency Row
+    // MARK: - Currency Row
     private var currencyRow: some View {
         HStack {
             Text("Валюта")
             Spacer()
-            Text(Currency(rawValue: currencyCode)?.symbol ?? "₽")
+            Text(vm.selectedCurrency.symbol)
                 .foregroundColor(vm.isEditing ? Color(hex: "#6F5DB7") : .primary)
 
             if vm.isEditing {

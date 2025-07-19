@@ -34,13 +34,14 @@ final class TransactionsFileCache {
 
     // MARK: - Persistence
     func save(to fileURL: URL) throws {
-        let objs = transactions.map { $0.jsonObject }
-        guard JSONSerialization.isValidJSONObject(objs) else {
-            throw CacheError.invalidJSON
-        }
-        let data = try JSONSerialization.data(withJSONObject: objs, options: [.prettyPrinted])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+
+        let data = try encoder.encode(transactions)
         try data.write(to: fileURL, options: [.atomic])
     }
+
 
     func load(from fileURL: URL) throws {
         let data = try Data(contentsOf: fileURL)

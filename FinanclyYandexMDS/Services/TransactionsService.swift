@@ -1,139 +1,183 @@
 import Foundation
 
 final class TransactionsService {
-    
     // MARK: - Dependencies
+    let client: NetworkClient
     private let fileCache: TransactionsFileCache
     private let fileURL: URL
-    private(set) var transactions: [Transaction] = []
+    private let localStore: TransactionsLocalStore?
+    private let backupStore: TransactionsBackupStore?
 
     // MARK: - Init
-    init(fileName: String = "transactions") {
+    init(
+        client: NetworkClient,
+        localStore: TransactionsLocalStore? = nil,
+        backupStore: TransactionsBackupStore? = nil,
+        fileName: String = "transactions"
+    ) {
+        self.client = client
+        self.localStore = localStore
+        self.backupStore = backupStore
         self.fileCache = TransactionsFileCache()
         self.fileURL = TransactionsFileCache.defaultFileURL(fileName: fileName)
 
-        // Пытаемся загрузить из файла
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            do {
-                try fileCache.load(from: fileURL)
-                self.transactions = fileCache.transactions
-            } catch {
-                print("⚠️ Failed to load transactions from file: \(error)")
-                self.transactions = []
+        try? fileCache.load(from: fileURL)
+    }
+
+    // MARK: - Cached
+    var cachedTransactions: [Transaction] {
+        fileCache.transactions
+    }
+
+    func refreshFromCache() {
+        try? fileCache.load(from: fileURL)
+    }
+
+    // MARK: - Load
+    func getTransactions(forAccount accountId: Int, from start: Date, to end: Date) async throws -> [Transaction] {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+
+        let queryItems = [
+            URLQueryItem(name: "startDate", value: formatter.string(from: start)),
+            URLQueryItem(name: "endDate", value: formatter.string(from: end))
+        ]
+
+        let path = "transactions/account/\(accountId)/period"
+
+        // Попытка синхронизации бэкапа
+        if let backupStore {
+            let backups = try await backupStore.getAll()
+            for backup in backups {
+                do {
+                    switch backup.action {
+                    case .create:
+                        let oldId = backup.transaction.id
+                        let newTx = TransactionRequestBody(from: backup.transaction)
+                        let created = try await createTransaction(newTx)
+                        try? await localStore?.delete(by: oldId)
+                        try? await backupStore.delete(by: oldId)
+                    case .update:
+                        _ = try await updateTransaction(id: backup.transaction.id, with: TransactionRequestBody(from: backup.transaction))
+                        try? await backupStore.delete(by: backup.transaction.id)
+                    case .delete:
+                        try await deleteTransaction(id: backup.transaction.id)
+                        try? await backupStore.delete(by: backup.transaction.id)
+                    }
+                } catch {
+                    print("Failed to sync backup transaction \(backup.transaction.id): \(error.localizedDescription)")
+                }
             }
-        } else {
-            // Файл отсутствует — создаём мок-данные и сохраняем
-            self.transactions = Self.generateMockTransactions()
-            for tx in transactions {
-                fileCache.add(tx)
-            }
-            try? fileCache.save(to: fileURL)
         }
-    }
 
-    // MARK: - Fetching
-    func getTransactions(from start: Date, to end: Date) async -> [Transaction] {
-        return transactions.filter {
-            $0.transactionDate >= start && $0.transactionDate <= end
-        }
-    }
-
-    // MARK: - Creating
-    func createTransaction(_ new: Transaction) async {
-        guard !transactions.contains(where: { $0.id == new.id }) else {
-            print("Transaction with id \(new.id) already exists. Skipping.")
-            return
-        }
-        transactions.append(new)
-        fileCache.add(new)
-        try? fileCache.save(to: fileURL)
-    }
-
-    // MARK: - Updating
-    func updateTransaction(_ updated: Transaction) async {
-        guard let idx = transactions.firstIndex(where: { $0.id == updated.id }) else { return }
-        transactions[idx] = updated
-        fileCache.replaceAll(transactions)
-        try? fileCache.save(to: fileURL)
-    }
-
-    // MARK: - Deleting
-    func deleteTransaction(id: Int) async {
-        transactions.removeAll { $0.id == id }
-        fileCache.remove(withId: id)
-        try? fileCache.save(to: fileURL)
-    }
-    
-    func refresh() {
         do {
-            try fileCache.load(from: fileURL)
-            self.transactions = fileCache.transactions
+            let txs: [Transaction] = try await client.request(
+                path: path,
+                method: "GET",
+                body: Optional<EmptyRequest>.none,
+                queryItems: queryItems
+            )
+            fileCache.replaceAll(txs)
+            try? fileCache.save(to: fileURL)
+            try? await localStore?.replaceAll(txs)
+            return txs
         } catch {
-            print("⚠️ Failed to refresh transactions from file: \(error)")
+            let local = try await localStore?.getAll() ?? []
+            let backup = try await backupStore?.getAll().map { $0.transaction } ?? []
+            let merged = (local + backup).filter {
+                $0.account.id == accountId && $0.transactionDate >= start && $0.transactionDate <= end
+            }
+            return merged
         }
     }
 
-    // MARK: - Mocks
-    private static func generateMockTransactions() -> [Transaction] {
-        let calendar = Calendar.current
-        let now = Date()
-        let account = BankAccount(
-            id: 1,
-            name: "Основной счёт",
-            balance: Decimal(string: "5000")!,
-            currency: "RUB"
-        )
-
-        let incomeCategories: [Category] = [
-            .init(id: 100, name: "Зарплата", emoji: "💼", isIncome: true),
-            .init(id: 101, name: "Бонус", emoji: "🎁", isIncome: true),
-        ]
-        let outcomeCategories: [Category] = [
-            .init(id: 1, name: "Продукты", emoji: "🍏", isIncome: false),
-            .init(id: 2, name: "Кофе", emoji: "☕️", isIncome: false),
-            .init(id: 3, name: "Транспорт", emoji: "🚕", isIncome: false),
-            .init(id: 4, name: "Ресторан", emoji: "🍽️", isIncome: false),
-        ]
-
-        var txs: [Transaction] = []
-
-        for i in 0..<5 {
-            let date = calendar.date(byAdding: .day, value: -i, to: now)!
-            let category = incomeCategories[i % incomeCategories.count]
-            let amount = Decimal(string: "\(1000 * (i + 1))")!
-            txs.append(
-                Transaction(
-                    id: 1000 + i,
-                    account: account,
-                    category: category,
-                    amount: amount,
-                    transactionDate: date,
-                    comment: i % 2 == 0 ? "Периодический платёж" : nil,
-                    createdAt: date,
-                    updatedAt: date
-                )
+    // MARK: - Create
+    func createTransaction(_ tx: TransactionRequestBody) async throws -> Transaction {
+        do {
+            let response: TransactionResponseBody = try await client.request(
+                path: "transactions",
+                method: "POST",
+                body: tx
             )
-        }
 
-        for i in 0..<10 {
-            let date = calendar.date(byAdding: .day, value: -i, to: now)!
-            let category = outcomeCategories[i % outcomeCategories.count]
-            let amount = Decimal(string: "\(500 * (i + 1))")!
-            let comment: String? = (i % 3 == 0) ? "Тестовый комментарий" : nil
-            txs.append(
-                Transaction(
-                    id: 2000 + i,
-                    account: account,
-                    category: category,
-                    amount: amount,
-                    transactionDate: date,
-                    comment: comment,
-                    createdAt: date,
-                    updatedAt: date
-                )
+            let account = try await BankAccountsService(client: client).getAccount(withId: response.accountId)
+            let category = try await CategoriesService(client: client).getCategory(withId: response.categoryId)
+            let formatter = ISO8601DateFormatter()
+
+            let transaction = Transaction(
+                id: response.id,
+                account: account,
+                category: category,
+                amount: Decimal(string: response.amount) ?? 0,
+                transactionDate: formatter.date(from: response.transactionDate) ?? Date(),
+                comment: response.comment,
+                createdAt: formatter.date(from: response.createdAt) ?? Date(),
+                updatedAt: formatter.date(from: response.updatedAt) ?? Date()
             )
-        }
 
-        return txs.shuffled()
+            fileCache.add(transaction)
+            try? fileCache.save(to: fileURL)
+            try? await localStore?.create(transaction)
+            try? await backupStore?.delete(by: transaction.id)
+            return transaction
+        } catch {
+            let tempId = Int(Date().timeIntervalSince1970 * -1)
+            let dummy = Transaction(
+                id: tempId,
+                account: .dummy,
+                category: .dummy,
+                amount: Decimal(string: tx.amount) ?? 0,
+                transactionDate: ISO8601DateFormatter().date(from: tx.transactionDate) ?? Date(),
+                comment: tx.comment,
+                createdAt: Date(),
+                updatedAt: Date()
+            )
+            try? await localStore?.create(dummy)
+            try? await backupStore?.save(TransactionBackupModel(id: tempId, action: .create, transaction: dummy))
+            throw error
+        }
+    }
+
+    // MARK: - Update
+    func updateTransaction(id: Int, with tx: TransactionRequestBody) async throws -> Transaction {
+        do {
+            let updated: Transaction = try await client.request(
+                path: "transactions/\(id)",
+                method: "PUT",
+                body: tx
+            )
+
+            fileCache.remove(withId: id)
+            fileCache.add(updated)
+            try? fileCache.save(to: fileURL)
+            try? await localStore?.update(updated)
+            try? await backupStore?.delete(by: id)
+            return updated
+        } catch {
+            try? await backupStore?.save(TransactionBackupModel(id: id, action: .update, transaction: Transaction(from: tx, id: id)))
+            throw error
+        }
+    }
+
+    // MARK: - Delete
+    func deleteTransaction(id: Int) async throws {
+        do {
+            _ = try await client.request(
+                path: "transactions/\(id)",
+                method: "DELETE",
+                body: EmptyRequest()
+            ) as Void
+
+            fileCache.remove(withId: id)
+            try? fileCache.save(to: fileURL)
+            try? await localStore?.delete(by: id)
+            try? await backupStore?.delete(by: id)
+        } catch {
+            let dummy = Transaction(id: id, account: .dummy, category: .dummy, amount: 0, transactionDate: Date(), comment: nil, createdAt: Date(), updatedAt: Date())
+            try? await backupStore?.save(TransactionBackupModel(id: id, action: .delete, transaction: dummy))
+            throw error
+        }
     }
 }
