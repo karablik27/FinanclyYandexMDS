@@ -3,16 +3,25 @@ import SwiftData
 
 @MainActor
 final class TransactionsListViewModel: ObservableObject {
+    // MARK: - Published
     @Published var transactions: [Transaction] = []
     @Published var total: Decimal = 0
     @Published var isLoading = false
     @Published var alertError: String?
+    @Published var isOffline = false
 
+    // MARK: - Private
     private let direction: Direction
     private let service: TransactionsService
     private let accountId: Int
 
-    init(direction: Direction, client: NetworkClient, accountId: Int, modelContainer: ModelContainer) {
+    // MARK: - Init
+    init(
+        direction: Direction,
+        client: NetworkClient,
+        accountId: Int,
+        modelContainer: ModelContainer
+    ) {
         self.direction = direction
         self.accountId = accountId
 
@@ -20,7 +29,9 @@ final class TransactionsListViewModel: ObservableObject {
 
         let backupSchema = Schema([TransactionBackupModel.self])
         let backupContainer = try? ModelContainer(for: backupSchema)
-        let backupStore: TransactionsBackupStore? = backupContainer.map { TransactionsBackupStore(container: $0) }
+        let backupStore: TransactionsBackupStore? = backupContainer.map {
+            TransactionsBackupStore(container: $0)
+        }
 
         self.service = TransactionsService(
             client: client,
@@ -31,6 +42,7 @@ final class TransactionsListViewModel: ObservableObject {
         Task { await loadToday() }
     }
 
+    // MARK: - Load
     func loadToday() async {
         isLoading = true
         defer { isLoading = false }
@@ -43,18 +55,22 @@ final class TransactionsListViewModel: ObservableObject {
         }
 
         do {
-            print("🌐 Загружаем транзакции с \(interval.start) по \(interval.end)")
-            let all = try await service.getTransactions(forAccount: accountId, from: interval.start, to: interval.end)
+            let all = try await service.getTransactions(
+                forAccount: accountId,
+                from: interval.start,
+                to: interval.end
+            )
 
             let filtered = all.filter {
                 interval.contains($0.transactionDate) &&
                 $0.category.direction == direction
             }
+
             transactions = filtered
             total = filtered.reduce(0) { $0 + $1.amount }
+            isOffline = false
 
         } catch {
-            print("⚠️ Ошибка: \(error)")
             alertError = "Не удалось загрузить операции: \(error.localizedDescription)"
 
             let cached = service.cachedTransactions
@@ -63,9 +79,10 @@ final class TransactionsListViewModel: ObservableObject {
                 $0.account.id == accountId &&
                 $0.category.direction == direction
             }
+
             transactions = filtered
             total = filtered.reduce(0) { $0 + $1.amount }
+            isOffline = true
         }
     }
-
 }
