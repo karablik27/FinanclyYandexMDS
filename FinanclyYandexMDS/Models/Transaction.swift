@@ -90,3 +90,18 @@ extension Transaction {
         self.updatedAt = updatedAt
     }
 }
+
+extension Transaction {
+    init(from request: TransactionRequestBody, id: Int) {
+        self.init(
+            id: id,
+            account: .dummy,
+            category: .dummy,
+            amount: Decimal(string: request.amount) ?? 0,
+            transactionDate: ISO8601DateFormatter().date(from: request.transactionDate) ?? Date(),
+            comment: request.comment,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+    }
+}

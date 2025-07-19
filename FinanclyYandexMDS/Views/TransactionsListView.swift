@@ -1,20 +1,28 @@
 import SwiftUI
+import SwiftData
 
 struct TransactionsListView: View {
     let direction: Direction
     let client: NetworkClient
     let accountId: Int
+    let modelContainer: ModelContainer
 
     @StateObject private var viewModel: TransactionsListViewModel
     @AppStorage("selectedCurrency") private var currencyCode: String = Currency.rub.rawValue
     @State private var activeForm: AddTransactionForm?
 
-    init(direction: Direction, client: NetworkClient, accountId: Int) {
+    init(direction: Direction, client: NetworkClient, accountId: Int, modelContainer: ModelContainer) {
         self.direction = direction
         self.client = client
         self.accountId = accountId
+        self.modelContainer = modelContainer
         _viewModel = StateObject(
-            wrappedValue: TransactionsListViewModel(direction: direction, client: client, accountId: accountId)
+            wrappedValue: TransactionsListViewModel(
+                direction: direction,
+                client: client,
+                accountId: accountId,
+                modelContainer: modelContainer
+            )
         )
     }
 
@@ -31,7 +39,12 @@ struct TransactionsListView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     NavigationLink {
-                        HistoryView(direction: direction, client: client, accountId: accountId)
+                        HistoryView(
+                            direction: direction,
+                            client: client,
+                            accountId: accountId,
+                            modelContainer: modelContainer
+                        )
                     } label: {
                         Image(systemName: "clock")
                             .foregroundColor(Color(hex: "#6F5DB7"))
@@ -40,7 +53,7 @@ struct TransactionsListView: View {
             }
             .overlay(addButton, alignment: .bottomTrailing)
             .fullScreenCover(item: $activeForm) { form in
-                AddTransactionView(mode: form, client: client, accountId: accountId)
+                AddTransactionView(mode: form, client: client, accountId: accountId, modelContainer: modelContainer )
             }
             .onChange(of: activeForm) {
                 if $1 == nil {

@@ -80,3 +80,9 @@ struct BankAccount: Codable {
             try container.encodeIfPresent(updatedAt, forKey: .updatedAt)
         }
 }
+
+extension BankAccount {
+    static var dummy: BankAccount {
+        BankAccount(id: -1, name: "Offline", balance: 0, currency: "RUB")
+    }
+}

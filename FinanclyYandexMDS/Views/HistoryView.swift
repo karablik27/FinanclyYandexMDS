@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 // MARK: - Constants
 private enum Constants {
@@ -18,14 +19,11 @@ private enum Constants {
     static let dividerIndent: CGFloat = 44
 }
 
-// MARK: - HistoryView
-
 struct HistoryView: View {
-
-    // MARK: - Dependencies
     let direction: Direction
     let client: NetworkClient
     let accountId: Int
+    let modelContainer: ModelContainer
 
     @AppStorage("selectedCurrency") private var currencyCode: String = Currency.rub.rawValue
     @StateObject private var vm: HistoryViewModel
@@ -40,15 +38,19 @@ struct HistoryView: View {
         return f
     }()
 
-    // MARK: - Init
-    init(direction: Direction, client: NetworkClient, accountId: Int) {
+    init(direction: Direction, client: NetworkClient, accountId: Int, modelContainer: ModelContainer) {
         self.direction = direction
         self.client = client
         self.accountId = accountId
-        _vm = StateObject(wrappedValue: HistoryViewModel(direction: direction, client: client, accountId: accountId))
+        self.modelContainer = modelContainer
+        _vm = StateObject(wrappedValue: HistoryViewModel(
+            direction: direction,
+            client: client,
+            accountId: accountId,
+            modelContainer: modelContainer
+        ))
     }
 
-    // MARK: - Body
     var body: some View {
         NavigationStack {
             ZStack {
@@ -56,38 +58,15 @@ struct HistoryView: View {
                     LoadingView()
                 } else {
                     VStack(spacing: Constants.sectionSpacing) {
-
-                        // MARK: - Header
                         Text("Моя история")
                             .font(.largeTitle.bold())
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, Constants.horizontalPadding)
 
-                        // MARK: - Period & Summary Section
                         VStack(spacing: 0) {
-                            periodRow(
-                                title: "Начало",
-                                date: Binding(
-                                    get: { vm.startDate },
-                                    set: { new in
-                                        vm.startDate = new
-                                        if new > vm.endDate { vm.endDate = new }
-                                        Task { await vm.load() }
-                                    }
-                                )
-                            )
+                            periodRow(title: "Начало", date: $vm.startDate)
                             Divider()
-                            periodRow(
-                                title: "Конец",
-                                date: Binding(
-                                    get: { vm.endDate },
-                                    set: { new in
-                                        vm.endDate = new
-                                        if new < vm.startDate { vm.startDate = new }
-                                        Task { await vm.load() }
-                                    }
-                                )
-                            )
+                            periodRow(title: "Конец", date: $vm.endDate)
                             Divider()
                             HStack {
                                 Text("Сортировка").font(.body)
@@ -106,13 +85,12 @@ struct HistoryView: View {
                             HStack {
                                 Text("Сумма")
                                 Spacer()
-                                Text(
-                                    vm.total.formatted(
-                                        .currency(code: currencyCode)
-                                            .locale(Locale(identifier: "ru_RU"))
-                                            .precision(.fractionLength(0))
-                                    )
+                                let formattedTotal = vm.total.formatted(
+                                    .currency(code: currencyCode)
+                                        .locale(Locale(identifier: "ru_RU"))
+                                        .precision(.fractionLength(0))
                                 )
+                                Text(formattedTotal)
                             }
                             .padding(.vertical, Constants.amountSectionVerticalPadding)
                             .padding(.horizontal, Constants.horizontalPadding)
@@ -121,14 +99,12 @@ struct HistoryView: View {
                         .cornerRadius(Constants.periodRowCornerRadius)
                         .padding(.horizontal, Constants.horizontalPadding)
 
-                        // MARK: - Operations Header
                         Text("ОПЕРАЦИИ")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, Constants.horizontalPadding)
 
-                        // MARK: - Operations List
                         ScrollView {
                             LazyVStack(spacing: 0) {
                                 ForEach(sortedTransactions, id: \.id) { tx in
@@ -160,12 +136,13 @@ struct HistoryView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     NavigationLink {
                         AnalysisViewControllerWrapper(
-                                service: TransactionsService(client: client),
-                                accountId: accountId,
-                                direction: direction
-                            )
-                            .edgesIgnoringSafeArea(.top)
-                            .navigationBarBackButtonHidden(true)
+                            client: client,
+                            accountId: accountId,
+                            direction: direction,
+                            modelContainer: modelContainer
+                        )
+                        .edgesIgnoringSafeArea(.top)
+                        .navigationBarBackButtonHidden(true)
                     } label: {
                         Image(systemName: "doc")
                             .foregroundColor(Color(hex: "#6F5DB7"))
@@ -175,7 +152,12 @@ struct HistoryView: View {
         }
         .navigationBarBackButtonHidden(true)
         .fullScreenCover(item: $activeForm) { form in
-            AddTransactionView(mode: form, client: client, accountId: accountId)
+            AddTransactionView(
+                mode: form,
+                client: client,
+                accountId: accountId,
+                modelContainer: modelContainer
+            )
         }
         .onChange(of: activeForm) {
             if $1 == nil {
@@ -190,9 +172,10 @@ struct HistoryView: View {
         } message: {
             Text(vm.alertError ?? "")
         }
+        .onChange(of: vm.startDate) { _ in Task { await vm.load() } }
+        .onChange(of: vm.endDate) { _ in Task { await vm.load() } }
     }
 
-    // MARK: - Sorted Transactions
     private var sortedTransactions: [Transaction] {
         switch sortBy {
         case .date:
@@ -202,7 +185,6 @@ struct HistoryView: View {
         }
     }
 
-    // MARK: - Period Row
     @ViewBuilder
     private func periodRow(title: String, date: Binding<Date>) -> some View {
         HStack {
@@ -212,17 +194,14 @@ struct HistoryView: View {
                 Text(df.string(from: date.wrappedValue))
                     .font(.callout)
                     .foregroundColor(.primary)
-                    .frame(width: Constants.periodRowHeight.width,
-                           height: Constants.periodRowHeight.height)
+                    .frame(width: Constants.periodRowHeight.width, height: Constants.periodRowHeight.height)
                     .background(Color.accentColor.opacity(0.2))
                     .cornerRadius(Constants.periodRowCornerRadius)
-
                 DatePicker("", selection: date, displayedComponents: [.date])
                     .labelsHidden()
                     .datePickerStyle(.compact)
                     .tint(.accentColor)
-                    .frame(width: Constants.periodRowHeight.width,
-                           height: Constants.periodRowHeight.height)
+                    .frame(width: Constants.periodRowHeight.width, height: Constants.periodRowHeight.height)
                     .blendMode(.destinationOver)
             }
         }
@@ -230,7 +209,6 @@ struct HistoryView: View {
         .padding(.horizontal, Constants.horizontalPadding)
     }
 
-    // MARK: - Operation Row
     @ViewBuilder
     private func operationRow(_ tx: Transaction) -> some View {
         Button {
@@ -251,14 +229,13 @@ struct HistoryView: View {
 
                 Spacer()
 
-                Text(
-                    tx.amount.formatted(
-                        .currency(code: currencyCode)
-                            .locale(Locale(identifier: "ru_RU"))
-                            .precision(.fractionLength(0))
-                    )
+                let formattedAmount = tx.amount.formatted(
+                    .currency(code: currencyCode)
+                        .locale(Locale(identifier: "ru_RU"))
+                        .precision(.fractionLength(0))
                 )
-                .font(.body)
+                Text(formattedAmount)
+                    .font(.body)
 
                 Image(systemName: "chevron.right")
                     .font(.caption2)

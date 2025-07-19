@@ -1,29 +1,28 @@
 import SwiftUI
+import SwiftData
 
-// MARK: – UI-constants
 private enum Constants {
-    // layout
-    static let navHPad:    CGFloat = 16
-    static let vSpace:     CGFloat = 16
-    static let titleHPad:  CGFloat = 16
-    static let topOffset:  CGFloat = 40
-    // card & rows
+    static let navHPad: CGFloat = 16
+    static let vSpace: CGFloat = 16
+    static let titleHPad: CGFloat = 16
+    static let topOffset: CGFloat = 40
     static let cardCorner: CGFloat = 12
-    static let cellVPad:   CGFloat = 8
-    static let cellHPad:   CGFloat = 12
-    static let icon:       CGFloat = 32
+    static let cellVPad: CGFloat = 8
+    static let cellHPad: CGFloat = 12
+    static let icon: CGFloat = 32
 }
 
-// MARK: – Top-level screen
 struct CategoriesView: View {
     let client: NetworkClient
+    let modelContainer: ModelContainer
 
     @StateObject private var vm: CategoriesViewModel
     private var filtered: [Category] { vm.filteredCategories }
 
-    init(client: NetworkClient) {
+    init(client: NetworkClient, modelContainer: ModelContainer) {
         self.client = client
-        _vm = StateObject(wrappedValue: CategoriesViewModel(client: client))
+        self.modelContainer = modelContainer
+        _vm = StateObject(wrappedValue: CategoriesViewModel(client: client, modelContainer: modelContainer))
     }
 
     var body: some View {
@@ -86,9 +85,6 @@ struct CategoriesView: View {
     }
 }
 
-
-
-// MARK: – Row
 private struct CategoryRow: View {
     let category: Category
     var body: some View {

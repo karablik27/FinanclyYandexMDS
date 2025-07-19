@@ -1,17 +1,17 @@
 import UIKit
 import Combine
 import SwiftUI
+import SwiftData
 
 final class AnalysisViewController: UIViewController, UIAdaptivePresentationControllerDelegate {
 
     private let viewModel: AnalysisViewModel
+    private var cancellables = Set<AnyCancellable>()
     private let startDatePicker = UIDatePicker()
     private let endDatePicker = UIDatePicker()
     private let sumLabel = UILabel()
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let activityIndicator = UIActivityIndicatorView(style: .large)
-
-    private var cancellables = Set<AnyCancellable>()
 
     private let sortControl: UISegmentedControl = {
         let control = UISegmentedControl(items: ["По дате", "По сумме"])
@@ -24,13 +24,19 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
     }()
 
     // MARK: - Init
-    init(service: TransactionsService, accountId: Int, direction: Direction) {
-        self.viewModel = AnalysisViewModel(service: service, accountId: accountId, direction: direction)
+    init(client: NetworkClient, accountId: Int, direction: Direction, modelContainer: ModelContainer) {
+        self.viewModel = AnalysisViewModel(
+            client: client,
+            accountId: accountId,
+            direction: direction,
+            modelContainer: modelContainer
+        )
         super.init(nibName: nil, bundle: nil)
     }
-
+    
+    @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError()
+        fatalError("init(coder:) has not been implemented")
     }
 
     // MARK: - Lifecycle
@@ -312,11 +318,18 @@ extension AnalysisViewController: UITableViewDataSource, UITableViewDelegate {
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         let tx = viewModel.transactions[indexPath.row]
-        let view = AddTransactionView(mode: .edit(transaction: tx), client: viewModel.service.client, accountId: viewModel.accountId)
-        let vc = UIHostingController(rootView: view)
+        let addTransactionView = AddTransactionView(
+            mode: .edit(transaction: tx),
+            client: viewModel.service.client,
+            accountId: viewModel.accountId,
+            modelContainer: viewModel.modelContainer
+        )
+
+        let vc = UIHostingController(rootView: addTransactionView)
         vc.modalPresentationStyle = .fullScreen
         present(vc, animated: true) {
             vc.presentationController?.delegate = self
         }
     }
+
 }

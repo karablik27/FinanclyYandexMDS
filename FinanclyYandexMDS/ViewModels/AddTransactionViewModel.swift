@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 @MainActor
 final class AddTransactionViewModel: ObservableObject {
@@ -19,12 +20,25 @@ final class AddTransactionViewModel: ObservableObject {
     private let accountId: Int
 
     // MARK: - Init
-    init(mode: AddTransactionForm, client: NetworkClient, accountId: Int) {
+    init(mode: AddTransactionForm, client: NetworkClient, accountId: Int, modelContainer: ModelContainer) {
         self.mode = mode
-        self.txService = TransactionsService(client: client)
-        self.accService = BankAccountsService(client: client)
-        self.catService = CategoriesService(client: client)
         self.accountId = accountId
+
+        let localTxStore = TransactionsSwiftDataStore(container: modelContainer)
+        let backupSchema = Schema([TransactionBackupModel.self])
+        let backupContainer = try? ModelContainer(for: backupSchema)
+        let backupStore = backupContainer.map { TransactionsBackupStore(container: $0) }
+
+        self.txService = TransactionsService(
+            client: client,
+            localStore: localTxStore,
+            backupStore: backupStore
+        )
+        self.accService = BankAccountsService(client: client)
+        self.catService = CategoriesService(
+            client: client,
+            localStore: CategoriesLocalSwiftDataStore(container: modelContainer)
+        )
 
         if case .edit(let tx) = mode {
             original = tx
@@ -39,6 +53,11 @@ final class AddTransactionViewModel: ObservableObject {
                 categories = try await catService.byDirection(mode.direction)
             } catch {
                 print("Ошибка загрузки категорий: \(error.localizedDescription)")
+                do {
+                    categories = try await catService.loadFromLocal().filter { $0.direction == mode.direction }
+                } catch {
+                    print("Ошибка локальной загрузки категорий: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -61,7 +80,7 @@ final class AddTransactionViewModel: ObservableObject {
               let amount = Decimal(string: normalizedAmountString)
         else { return }
 
-        let requestBody = TransactionRequestBody(
+        let body = TransactionRequestBody(
             accountId: accountId,
             categoryId: cat.id,
             amount: amount,
@@ -71,22 +90,23 @@ final class AddTransactionViewModel: ObservableObject {
 
         do {
             if mode.isCreate {
-                _ = try await txService.createTransaction(requestBody)
+                _ = try await txService.createTransaction(body)
             } else if let id = original?.id {
-                _ = try await txService.updateTransaction(id: id, with: requestBody)
+                _ = try await txService.updateTransaction(id: id, with: body)
             }
         } catch {
-            print("Ошибка сохранения транзакции: \(error.localizedDescription)")
+            print("⚠️ Ошибка сохранения: \(error.localizedDescription)")
         }
     }
 
     // MARK: - Delete
     func delete() async {
         guard case .edit(let tx) = mode else { return }
+
         do {
             try await txService.deleteTransaction(id: tx.id)
         } catch {
-            print("Ошибка удаления транзакции: \(error.localizedDescription)")
+            print("⚠️ Ошибка удаления: \(error.localizedDescription)")
         }
     }
 }

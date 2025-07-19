@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 struct AddTransactionView: View {
     @Environment(\.dismiss) private var dismiss
@@ -7,8 +8,13 @@ struct AddTransactionView: View {
     @AppStorage("selectedCurrency") private var storedCurrency: String = Currency.rub.rawValue
     @State private var showValidationAlert = false
 
-    init(mode: AddTransactionForm, client: NetworkClient, accountId: Int) {
-        _vm = StateObject(wrappedValue: .init(mode: mode, client: client, accountId: accountId))
+    init(mode: AddTransactionForm, client: NetworkClient, accountId: Int, modelContainer: ModelContainer) {
+        _vm = StateObject(wrappedValue: .init(
+            mode: mode,
+            client: client,
+            accountId: accountId,
+            modelContainer: modelContainer
+        ))
     }
 
     private var currencySymbol: String {
@@ -39,10 +45,11 @@ struct AddTransactionView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(vm.mode.isCreate ? "Создание": "Редактирование")
+            .navigationTitle(vm.mode.isCreate ? "Создание" : "Редактирование")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() } .foregroundColor(Color(hex: "6F5DB7"))
+                    Button("Отмена") { dismiss() }
+                        .foregroundColor(Color(hex: "6F5DB7"))
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(vm.mode.isCreate ? "Создать" : "Сохранить") {
@@ -89,6 +96,7 @@ struct AddTransactionView: View {
         }
     }
 }
+
 
 struct CategoryRowView: View {
     @Binding var category: Category?

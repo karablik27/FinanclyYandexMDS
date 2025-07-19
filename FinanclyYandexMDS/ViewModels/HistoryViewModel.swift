@@ -1,8 +1,8 @@
 import Foundation
+import SwiftData
 
 @MainActor
 final class HistoryViewModel: ObservableObject {
-    // MARK: - Published Properties
     @Published var transactions: [Transaction] = []
     @Published var total: Decimal = 0
     @Published var startDate: Date
@@ -10,16 +10,32 @@ final class HistoryViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var alertError: String?
 
-    // MARK: - Private
     private let direction: Direction
     private let service: TransactionsService
     private let accountId: Int
 
-    // MARK: - Init
-    init(direction: Direction, client: NetworkClient, accountId: Int) {
+    init(
+        direction: Direction,
+        client: NetworkClient,
+        accountId: Int,
+        modelContainer: ModelContainer
+    ) {
         self.direction = direction
-        self.service = TransactionsService(client: client)
         self.accountId = accountId
+
+        // Local Store
+        let localStore: TransactionsLocalStore = TransactionsSwiftDataStore(container: modelContainer)
+
+        // Backup Store (optional)
+        let backupSchema = Schema([TransactionBackupModel.self])
+        let backupContainer = try? ModelContainer(for: backupSchema)
+        let backupStore: TransactionsBackupStore? = backupContainer.map { TransactionsBackupStore(container: $0) }
+
+        self.service = TransactionsService(
+            client: client,
+            localStore: localStore,
+            backupStore: backupStore
+        )
 
         let calendar = Calendar.current
         let now = Date()
@@ -30,7 +46,6 @@ final class HistoryViewModel: ObservableObject {
         Task { await load() }
     }
 
-    // MARK: - Load
     func load() async {
         isLoading = true
         defer { isLoading = false }
@@ -45,7 +60,18 @@ final class HistoryViewModel: ObservableObject {
             self.transactions = filtered
             self.total = filtered.reduce(0) { $0 + $1.amount }
         } catch {
+            print("⚠️ Ошибка при загрузке истории: \(error)")
             alertError = "Не удалось загрузить операции: \(error.localizedDescription)"
+
+            let cached = service.cachedTransactions
+            let filtered = cached.filter {
+                $0.transactionDate >= startDate &&
+                $0.transactionDate <= endDate &&
+                $0.account.id == accountId &&
+                $0.category.direction == direction
+            }
+            self.transactions = filtered
+            self.total = filtered.reduce(0) { $0 + $1.amount }
         }
     }
 }

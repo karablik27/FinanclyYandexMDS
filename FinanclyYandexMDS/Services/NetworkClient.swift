@@ -85,6 +85,7 @@ final class NetworkClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = method
+        request.timeoutInterval = 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         if !token.isEmpty {
@@ -101,6 +102,7 @@ final class NetworkClient {
 
         return request
     }
+
 
     private func handleResponse<T: Decodable>(data: Data?, response: URLResponse) throws -> T {
         guard let httpResponse = response as? HTTPURLResponse else {

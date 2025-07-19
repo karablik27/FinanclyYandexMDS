@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftData
 
 @MainActor
 final class CategoriesViewModel: ObservableObject {
@@ -11,10 +12,12 @@ final class CategoriesViewModel: ObservableObject {
 
     // MARK: - Dependencies
     private let service: CategoriesService
+    private let modelContext: ModelContext
 
     // MARK: - Init
-    init(client: NetworkClient) {
+    init(client: NetworkClient, modelContainer: ModelContainer) {
         self.service = CategoriesService(client: client)
+        self.modelContext = ModelContext(modelContainer)
         Task { await load() }
     }
 
@@ -23,8 +26,27 @@ final class CategoriesViewModel: ObservableObject {
         do {
             let result = try await service.all()
             categories = result
+            try? await saveToLocal(result)
         } catch {
             self.error = error
+            print("Ошибка загрузки категорий: \(error.localizedDescription)")
+            do {
+                let fetchDescriptor = FetchDescriptor<CategoryEntity>(
+                    sortBy: [SortDescriptor(\.name)]
+                )
+                let localEntities = try modelContext.fetch(fetchDescriptor)
+                categories = localEntities.map { entity in
+                    Category(
+                        id: entity.id,
+                        name: entity.name,
+                        emoji: Character(entity.emoji),
+                        isIncome: entity.direction
+                    )
+                }
+                print("Загружено \(categories.count) категорий из локального хранилища")
+            } catch {
+                print("Ошибка загрузки локальных категорий: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -46,8 +68,30 @@ final class CategoriesViewModel: ObservableObject {
             }
             .map(\.0)
     }
-}
 
+    private func saveToLocal(_ categories: [Category]) async throws {
+        for cat in categories {
+            let fetchDescriptor = FetchDescriptor<CategoryEntity>(
+                predicate: #Predicate { $0.id == cat.id },
+                sortBy: []
+            )
+            let existing = try modelContext.fetch(fetchDescriptor)
+
+            guard existing.isEmpty else { continue }
+
+            let entity = CategoryEntity(
+                id: cat.id,
+                name: cat.name,
+                emoji: String(cat.emoji),
+                direction: cat.isIncome
+            )
+            modelContext.insert(entity)
+        }
+
+        try modelContext.save()
+    }
+
+}
 
 // MARK: - Fuzzy match score
 private func fuzzyScore(source: String, pattern: String) -> Int {

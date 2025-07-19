@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import SwiftData
 
 private enum Constants {
     static let sidePadding: CGFloat = 16
@@ -11,15 +12,17 @@ private enum Constants {
 
 struct BankAccountView: View {
     let client: NetworkClient
+    let modelContainer: ModelContainer
 
     @StateObject private var vm: BankAccountViewModel
     @FocusState private var isFocused: Bool
     @State private var showCurrencyDialog = false
     @State private var hideBalance = true
 
-    init(client: NetworkClient) {
+    init(client: NetworkClient, modelContainer: ModelContainer) {
         self.client = client
-        _vm = StateObject(wrappedValue: BankAccountViewModel(client: client))
+        self.modelContainer = modelContainer
+        _vm = StateObject(wrappedValue: BankAccountViewModel(client: client, modelContainer: modelContainer))
     }
 
     var body: some View {
@@ -168,4 +171,4 @@ struct BankAccountView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: Constants.cornerRadius))
     }
-} 
+}

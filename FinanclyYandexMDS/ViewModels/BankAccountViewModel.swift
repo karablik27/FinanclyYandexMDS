@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import SwiftData
 
 @MainActor
 final class BankAccountViewModel: ObservableObject {
@@ -18,10 +19,13 @@ final class BankAccountViewModel: ObservableObject {
 
     // MARK: - Dependencies
     private let service: BankAccountsService
+    private let modelContext: ModelContext
 
     // MARK: - Init
-    init(client: NetworkClient) {
-        self.service = BankAccountsService(client: client)
+    init(client: NetworkClient, modelContainer: ModelContainer) {
+        let localStore = BankAccountsLocalSwiftDataStore(container: modelContainer)
+        self.service = BankAccountsService(client: client, localStore: localStore)
+        self.modelContext = ModelContext(modelContainer)
         Task { await loadAccount() }
     }
 
@@ -34,9 +38,50 @@ final class BankAccountViewModel: ObservableObject {
             account = acc
             selectedCurrency = Currency(rawValue: storedCurrency) ?? .rub
             balanceInput = Self.format(acc.balance)
+            try? await saveToLocal(acc)
         } catch {
             self.alertError = "Не удалось загрузить счёт: \(error.localizedDescription)"
+            print("Ошибка загрузки счёта: \(error)")
+            do {
+                let descriptor = FetchDescriptor<AccountEntity>()
+                let localAccounts = try modelContext.fetch(descriptor)
+                if let entity = localAccounts.first {
+                    let acc = entity.toModel()
+                    account = acc
+                    selectedCurrency = Currency(rawValue: acc.currency) ?? .rub
+                    balanceInput = Self.format(acc.balance)
+                    print("Счёт загружен локально")
+                }
+            } catch {
+                print("Ошибка загрузки локального счёта: \(error)")
+            }
         }
+    }
+
+    private func saveToLocal(_ acc: BankAccount) async throws {
+        // Проверяем, есть ли уже сущность с таким id
+        let descriptor = FetchDescriptor<AccountEntity>(
+            predicate: #Predicate { $0.id == acc.id }
+        )
+        let existing = try modelContext.fetch(descriptor).first
+
+        if let existing = existing {
+            // Обновляем поля
+            existing.name = acc.name
+            existing.balance = acc.balance
+            existing.currency = acc.currency
+        } else {
+            // Вставляем новую
+            let entity = AccountEntity(
+                id: acc.id,
+                name: acc.name,
+                balance: acc.balance,
+                currency: acc.currency
+            )
+            modelContext.insert(entity)
+        }
+
+        try? modelContext.save()
     }
 
     func toggleEditing() {
@@ -64,15 +109,15 @@ final class BankAccountViewModel: ObservableObject {
             account = updated
             balanceInput = Self.format(updated.balance)
             storedCurrency = selectedCurrency.rawValue
+            try? await saveToLocal(updated)
         } catch {
             self.alertError = "Не удалось сохранить изменения: \(error.localizedDescription)"
         }
     }
-    
+
     public func saveAccount() async {
         await saveChanges()
     }
-
 
     func sanitize(_ text: String) -> String {
         var clean = text
