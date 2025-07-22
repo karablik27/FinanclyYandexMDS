@@ -1,61 +1,121 @@
 import SwiftUI
 import Foundation
+import SwiftData
 
 @MainActor
 final class BankAccountViewModel: ObservableObject {
 
-    // — Published
+    // MARK: - Published
     @Published var account: BankAccount?
-    @Published var isEditing          = false
-    @Published var balanceInput       = ""
-    @Published var selectedCurrency   = Currency.rub
+    @Published var isEditing = false
+    @Published var balanceInput = ""
     @Published var showCurrencyPicker = false
     @Published var error: Error?
+    @Published var isLoading = false
+    @Published var alertError: String?
 
-    private let service = BankAccountsService()
+    @AppStorage("selectedCurrency") private var storedCurrency: String = Currency.rub.rawValue
+    @Published var selectedCurrency = Currency.rub
 
-    // MARK: init / load
-    init() { Task { await loadAccount() } }
+    // MARK: - Dependencies
+    private let service: BankAccountsService
+    private let modelContext: ModelContext
 
-    func loadAccount() async {
-        let acc = await service.getAccount()
-        account            = acc
-        selectedCurrency   = Currency(rawValue: acc.currency) ?? .rub
-        balanceInput       = Self.format(acc.balance)
+    // MARK: - Init
+    init(client: NetworkClient, modelContainer: ModelContainer) {
+        let localStore = BankAccountsLocalSwiftDataStore(container: modelContainer)
+        self.service = BankAccountsService(client: client, localStore: localStore)
+        self.modelContext = ModelContext(modelContainer)
+        Task { await loadAccount() }
     }
 
-    // MARK: Edit toggle
+    func loadAccount() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            let acc = try await service.getAccount()
+            account = acc
+            selectedCurrency = Currency(rawValue: storedCurrency) ?? .rub
+            balanceInput = Self.format(acc.balance)
+            try? await saveToLocal(acc)
+        } catch {
+            self.alertError = "Не удалось загрузить счёт: \(error.localizedDescription)"
+            print("Ошибка загрузки счёта: \(error)")
+            do {
+                let descriptor = FetchDescriptor<AccountEntity>()
+                let localAccounts = try modelContext.fetch(descriptor)
+                if let entity = localAccounts.first {
+                    let acc = entity.toModel()
+                    account = acc
+                    selectedCurrency = Currency(rawValue: acc.currency) ?? .rub
+                    balanceInput = Self.format(acc.balance)
+                    print("Счёт загружен локально")
+                }
+            } catch {
+                print("Ошибка загрузки локального счёта: \(error)")
+            }
+        }
+    }
+
+    private func saveToLocal(_ acc: BankAccount) async throws {
+        let descriptor = FetchDescriptor<AccountEntity>(
+            predicate: #Predicate { $0.id == acc.id }
+        )
+        let existing = try modelContext.fetch(descriptor).first
+
+        if let existing = existing {
+            existing.name = acc.name
+            existing.balance = acc.balance
+            existing.currency = acc.currency
+        } else {
+            let entity = AccountEntity(
+                id: acc.id,
+                name: acc.name,
+                balance: acc.balance,
+                currency: acc.currency
+            )
+            modelContext.insert(entity)
+        }
+
+        try? modelContext.save()
+    }
+
     func toggleEditing() {
         if isEditing {
             Task { await saveChanges() }
         } else if let acc = account {
-            balanceInput     = Self.format(acc.balance)
-            selectedCurrency = Currency(rawValue: acc.currency) ?? .rub
+            balanceInput = Self.format(acc.balance)
+            selectedCurrency = Currency(rawValue: storedCurrency) ?? .rub
         }
         isEditing.toggle()
     }
 
-    // MARK: Save
     private func saveChanges() async {
-        guard let old = account,
+        guard let acc = account,
               let newBal = Decimal(string: sanitize(balanceInput))
         else { return }
 
-        let updated = BankAccount(
-            id:         old.id,
-            userId:     old.userId ?? 0,
-            name:       old.name,
-            balance:    newBal,
-            currency:   selectedCurrency.rawValue,
-            createdAt:  old.createdAt ?? Date(),
-            updatedAt:  Date()
-        )
-        await service.updateAccount(updated)
-        account      = updated
-        balanceInput = Self.format(newBal)
+        do {
+            let updated = try await service.updateAccount(
+                id: acc.id,
+                name: acc.name,
+                balance: newBal,
+                currency: selectedCurrency.rawValue
+            )
+            account = updated
+            balanceInput = Self.format(updated.balance)
+            storedCurrency = selectedCurrency.rawValue
+            try? await saveToLocal(updated)
+        } catch {
+            self.alertError = "Не удалось сохранить изменения: \(error.localizedDescription)"
+        }
     }
 
-    // MARK: Helpers
+    public func saveAccount() async {
+        await saveChanges()
+    }
+
     func sanitize(_ text: String) -> String {
         var clean = text
             .replacingOccurrences(of: ",", with: ".")
@@ -63,16 +123,15 @@ final class BankAccountViewModel: ObservableObject {
 
         if let dot = clean.firstIndex(of: ".") {
             let after = clean.index(after: dot)
-            clean = String(clean[..<after])
-                  + clean[after...].replacingOccurrences(of: ".", with: "")
+            clean = String(clean[..<after]) + clean[after...].replacingOccurrences(of: ".", with: "")
         }
         return clean
     }
 
     private static func format(_ value: Decimal) -> String {
         let f = NumberFormatter()
-        f.numberStyle            = .decimal
-        f.maximumFractionDigits  = 0
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = 0
         return f.string(for: value) ?? "0"
     }
 }

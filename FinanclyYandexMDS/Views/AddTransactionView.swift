@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 struct AddTransactionView: View {
     @Environment(\.dismiss) private var dismiss
@@ -7,8 +8,13 @@ struct AddTransactionView: View {
     @AppStorage("selectedCurrency") private var storedCurrency: String = Currency.rub.rawValue
     @State private var showValidationAlert = false
 
-    init(mode: AddTransactionForm) {
-        _vm = StateObject(wrappedValue: .init(mode: mode))
+    init(mode: AddTransactionForm, client: NetworkClient, accountId: Int, modelContainer: ModelContainer) {
+        _vm = StateObject(wrappedValue: .init(
+            mode: mode,
+            client: client,
+            accountId: accountId,
+            modelContainer: modelContainer
+        ))
     }
 
     private var currencySymbol: String {
@@ -39,14 +45,14 @@ struct AddTransactionView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(vm.mode.isCreate ? "Создание": "Редактирование")
+            .navigationTitle(vm.mode.isCreate ? "Создание" : "Редактирование")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() } .foregroundColor(Color(hex: "6F5DB7"))
+                    Button("Отмена") { dismiss() }
+                        .foregroundColor(Color(hex: "6F5DB7"))
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(vm.mode.isCreate ? "Создать" : "Сохранить")
-                        {
+                    Button(vm.mode.isCreate ? "Создать" : "Сохранить") {
                         if vm.canSave {
                             Task {
                                 await vm.save()
@@ -55,7 +61,6 @@ struct AddTransactionView: View {
                         } else {
                             showValidationAlert = true
                         }
-                        
                     }
                     .foregroundColor(Color(hex: "6F5DB7"))
                 }
@@ -86,14 +91,11 @@ struct AddTransactionView: View {
         let filtered = newValue.filter { String($0).rangeOfCharacter(from: allowedChars) != nil }
         let parts = filtered.components(separatedBy: sep)
         let result = parts.prefix(2).joined(separator: sep)
-        
         if result != vm.amountString {
             vm.amountString = result
         }
     }
-
 }
-
 
 
 struct CategoryRowView: View {
@@ -110,8 +112,12 @@ struct CategoryRowView: View {
                 Spacer()
                 Text(category?.name ?? "Не выбрана")
                     .foregroundColor(.gray)
+                Image(systemName: "chevron.right")
+                    .foregroundColor(.secondary)
             }
+            .padding(.vertical, 8)
         }
+        .listRowBackground(Color.white)
     }
 }
 
@@ -129,7 +135,6 @@ struct AmountRowView: View {
         HStack {
             Text("Сумма")
             Spacer()
-
             HStack(spacing: 4) {
                 TextField("0", text: $amountString)
                     .multilineTextAlignment(.trailing)
@@ -153,14 +158,6 @@ struct AmountRowView: View {
     }
 }
 
-
-private enum Constants {
-    static let periodRowHeight = CGSize(width: 120, height: 36)
-    static let periodRowCornerRadius: CGFloat = 8
-    static let verticalPadding: CGFloat = 12
-    static let horizontalPadding: CGFloat = 16
-}
-
 struct DateRowView: View {
     @Binding var date: Date
 
@@ -180,43 +177,35 @@ struct DateRowView: View {
                     .frame(alignment: .leading)
                     .font(.callout)
                     .foregroundColor(.primary)
-                    .frame(width: Constants.periodRowHeight.width,
-                           height: Constants.periodRowHeight.height)
+                    .frame(width: Constants.periodRowHeight.width, height: Constants.periodRowHeight.height)
                     .background(Color.accentColor.opacity(0.2))
                     .cornerRadius(Constants.periodRowCornerRadius)
 
-                DatePicker(
-                    "",
-                    selection: $date,
-                    in: ...Date(),
-                    displayedComponents: [.date]
-                )
-                .labelsHidden()
-                .datePickerStyle(.compact)
-                .tint(.accentColor)
-                .frame(width: Constants.periodRowHeight.width,
-                       height: Constants.periodRowHeight.height)
-                .blendMode(.destinationOver)
-                .clipped()
-                .opacity(0.01)
-                .allowsHitTesting(true)
-
+                DatePicker("", selection: $date, in: ...Date(), displayedComponents: [.date])
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
+                    .tint(.accentColor)
+                    .frame(width: Constants.periodRowHeight.width, height: Constants.periodRowHeight.height)
+                    .blendMode(.destinationOver)
+                    .clipped()
+                    .opacity(0.01)
+                    .allowsHitTesting(true)
             }
         }
         .padding(.vertical, Constants.verticalPadding)
         .padding(.horizontal, Constants.horizontalPadding)
         .frame(height: 24)
-        
     }
 }
+
 struct TimeRowView: View {
     @Binding var date: Date
 
-    private let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.dateFormat = "HH:mm"
-        return formatter
+    private let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "HH:mm"
+        return f
     }()
 
     var body: some View {
@@ -224,20 +213,18 @@ struct TimeRowView: View {
             Text("Время")
             Spacer()
             ZStack {
-                Text(timeFormatter.string(from: date))
+                Text(formatter.string(from: date))
                     .font(.callout)
                     .foregroundColor(.primary)
-                    .frame(width: 56,
-                           height: Constants.periodRowHeight.height)
+                    .frame(width: 56, height: Constants.periodRowHeight.height)
                     .background(Color.accentColor.opacity(0.2))
                     .cornerRadius(Constants.periodRowCornerRadius)
-                
-                DatePicker("", selection: $date, displayedComponents: .hourAndMinute)
+
+                DatePicker("", selection: $date, displayedComponents: [.hourAndMinute])
                     .labelsHidden()
                     .datePickerStyle(.compact)
                     .tint(.accentColor)
-                    .frame(width: 56,
-                           height: Constants.periodRowHeight.height)
+                    .frame(width: 56, height: Constants.periodRowHeight.height)
                     .blendMode(.destinationOver)
             }
         }
@@ -246,8 +233,6 @@ struct TimeRowView: View {
         .frame(height: 24)
     }
 }
-
-
 
 struct CommentSectionView: View {
     @Binding var comment: String
@@ -268,8 +253,6 @@ struct DeleteSectionView: View {
         }
     }
 }
-
-import SwiftUI
 
 struct CategoryPickerView: View {
     @Binding var selected: Category?
@@ -326,3 +309,9 @@ struct CategoryPickerView: View {
     }
 }
 
+private enum Constants {
+    static let periodRowHeight = CGSize(width: 120, height: 36)
+    static let periodRowCornerRadius: CGFloat = 8
+    static let verticalPadding: CGFloat = 12
+    static let horizontalPadding: CGFloat = 16
+}

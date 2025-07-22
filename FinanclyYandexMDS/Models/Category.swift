@@ -53,3 +53,9 @@ struct Category: Codable, Identifiable {
         case isIncome
     }
 }
+
+extension Category {
+    static var dummy: Category {
+        Category(id: -1, name: "Offline", emoji: "❓", isIncome: false)
+    }
+}

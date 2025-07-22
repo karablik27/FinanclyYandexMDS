@@ -1,45 +1,46 @@
 import SwiftUI
+import SwiftData
 
-// MARK: – UI-constants
 private enum Constants {
-    // layout
-    static let navHPad:    CGFloat = 16
-    static let vSpace:     CGFloat = 16
-    static let titleHPad:  CGFloat = 16
-    static let topOffset:  CGFloat = 40
-    // card & rows
+    static let navHPad: CGFloat = 16
+    static let vSpace: CGFloat = 16
+    static let titleHPad: CGFloat = 16
+    static let topOffset: CGFloat = 40
     static let cardCorner: CGFloat = 12
-    static let cellVPad:   CGFloat = 8
-    static let cellHPad:   CGFloat = 12
-    static let icon:       CGFloat = 32
+    static let cellVPad: CGFloat = 8
+    static let cellHPad: CGFloat = 12
+    static let icon: CGFloat = 32
 }
 
-// MARK: – Top-level screen
 struct CategoriesView: View {
-    @StateObject private var vm = CategoriesViewModel()
+    let client: NetworkClient
+    let modelContainer: ModelContainer
+
+    @StateObject private var vm: CategoriesViewModel
     private var filtered: [Category] { vm.filteredCategories }
+
+    init(client: NetworkClient, modelContainer: ModelContainer) {
+        self.client = client
+        self.modelContainer = modelContainer
+        _vm = StateObject(wrappedValue: CategoriesViewModel(client: client, modelContainer: modelContainer))
+    }
 
     var body: some View {
         NavigationView {
             VStack(alignment: .leading, spacing: Constants.vSpace) {
-
-                // ── Header
                 Text("Мои статьи")
                     .font(.largeTitle.bold())
                     .padding(.top, Constants.topOffset)
                     .padding(.horizontal, Constants.titleHPad)
 
-                // ── Search
                 SearchBar(text: $vm.searchText)
                     .padding(.horizontal, Constants.titleHPad)
 
-                // ── Caption
                 Text("СТАТЬИ")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.horizontal, Constants.titleHPad)
 
-                // ── LIST / EMPTY STATE
                 if filtered.isEmpty {
                     EmptyStateView()
                         .frame(maxWidth: .infinity)
@@ -54,8 +55,7 @@ struct CategoriesView: View {
 
                                 if cat.id != filtered.last?.id {
                                     Divider()
-                                        .padding(.leading,
-                                                 Constants.icon + Constants.cellHPad)
+                                        .padding(.leading, Constants.icon + Constants.cellHPad)
                                 }
                             }
                         }
@@ -68,8 +68,16 @@ struct CategoriesView: View {
                 Spacer(minLength: Constants.vSpace)
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .alert("Ошибка", isPresented: Binding(get: {
+                vm.error != nil
+            }, set: { _ in
+                vm.error = nil
+            })) {
+                Button("Ок", role: .cancel) {}
+            } message: {
+                Text(vm.error?.localizedDescription ?? "Неизвестная ошибка")
+            }
         }
-        .task { await vm.load() }
     }
 
     private var cardBackground: some View {
@@ -77,7 +85,6 @@ struct CategoriesView: View {
     }
 }
 
-// MARK: – Row
 private struct CategoryRow: View {
     let category: Category
     var body: some View {
