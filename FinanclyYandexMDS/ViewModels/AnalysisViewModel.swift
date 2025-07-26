@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftData
+import PieChart
 
 @MainActor
 final class AnalysisViewModel: ObservableObject {
@@ -87,5 +88,25 @@ final class AnalysisViewModel: ObservableObject {
             transactions.sort(by: { $0.amount > $1.amount })
         }
         onUpdate?()
+    }
+}
+
+extension AnalysisViewModel {
+    var chartEntities: [Entity] {
+        let categorySums = transactions.reduce(into: [String: Decimal]()) { result, tx in
+            result[tx.category.name, default: 0] += tx.amount
+        }
+
+        let sorted = categorySums
+            .map { Entity(value: $0.value, label: $0.key) }
+            .sorted { $0.value > $1.value }
+
+        if sorted.count > 5 {
+            let top5 = sorted.prefix(5)
+            let others = sorted.dropFirst(5).reduce(Decimal(0)) { $0 + $1.value }
+            return Array(top5) + [Entity(value: others, label: "Остальные")]
+        } else {
+            return sorted
+        }
     }
 }
