@@ -27,7 +27,7 @@ struct FinanclyYandexMDSApp: App {
     var body: some Scene {
         WindowGroup {
             let client = NetworkClient(token: token)
-            MainTab(
+            RootView(
                 client: client,
                 accountId: userId,
                 modelContainer: container

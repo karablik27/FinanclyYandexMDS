@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import SwiftData
+import Charts
 
 private enum Constants {
     static let sidePadding: CGFloat = 16
@@ -46,6 +47,12 @@ struct BankAccountView: View {
                                             showCurrencyDialog = true
                                         }
                                     }
+
+                                if !vm.isEditing && !vm.balanceHistory.isEmpty {
+                                    BalanceChartView(entries: vm.balanceHistory)
+                                        .frame(height: 200)
+                                        .padding(.top, 12)
+                                }
                             }
                             .padding(.horizontal, Constants.sidePadding)
                             .padding(.top, Constants.verticalGap)
