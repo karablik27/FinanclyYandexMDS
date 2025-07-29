@@ -13,6 +13,7 @@ final class BankAccountViewModel: ObservableObject {
     @Published var error: Error?
     @Published var isLoading = false
     @Published var alertError: String?
+    @Published var balanceHistory: [BalanceEntry] = []
 
     @AppStorage("selectedCurrency") private var storedCurrency: String = Currency.rub.rawValue
     @Published var selectedCurrency = Currency.rub
@@ -20,13 +21,17 @@ final class BankAccountViewModel: ObservableObject {
     // MARK: - Dependencies
     private let service: BankAccountsService
     private let modelContext: ModelContext
+    private let transactionService: TransactionsService
 
     // MARK: - Init
     init(client: NetworkClient, modelContainer: ModelContainer) {
         let localStore = BankAccountsLocalSwiftDataStore(container: modelContainer)
         self.service = BankAccountsService(client: client, localStore: localStore)
+        self.transactionService = TransactionsService(client: client)
         self.modelContext = ModelContext(modelContainer)
-        Task { await loadAccount() }
+        Task {
+            await loadAccount()
+        }
     }
 
     func loadAccount() async {
@@ -39,6 +44,7 @@ final class BankAccountViewModel: ObservableObject {
             selectedCurrency = Currency(rawValue: storedCurrency) ?? .rub
             balanceInput = Self.format(acc.balance)
             try? await saveToLocal(acc)
+            await loadBalanceHistory()
         } catch {
             self.alertError = "Не удалось загрузить счёт: \(error.localizedDescription)"
             print("Ошибка загрузки счёта: \(error)")
@@ -107,6 +113,7 @@ final class BankAccountViewModel: ObservableObject {
             balanceInput = Self.format(updated.balance)
             storedCurrency = selectedCurrency.rawValue
             try? await saveToLocal(updated)
+            await loadBalanceHistory()
         } catch {
             self.alertError = "Не удалось сохранить изменения: \(error.localizedDescription)"
         }
@@ -134,4 +141,50 @@ final class BankAccountViewModel: ObservableObject {
         f.maximumFractionDigits = 0
         return f.string(for: value) ?? "0"
     }
+
+    // MARK: - Balance History
+
+    func loadBalanceHistory() async {
+        guard let accountId = account?.id,
+              let currentBalance = account?.balance
+        else { return }
+
+        let calendar = Calendar.current
+        let now = Date()
+        let from = calendar.date(byAdding: .day, value: -29, to: now)!
+
+        do {
+            let txs = try await transactionService.getTransactions(
+                forAccount: accountId,
+                from: from,
+                to: now
+            )
+
+            var history: [BalanceEntry] = []
+            var runningBalance = currentBalance
+
+            for offset in 0..<30 {
+                guard let day = calendar.date(byAdding: .day, value: -offset, to: now) else { continue }
+
+                let startOfDay = calendar.startOfDay(for: day)
+                let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
+
+                history.append(BalanceEntry(date: startOfDay, balance: runningBalance))
+
+                let net = txs
+                    .filter { $0.transactionDate >= startOfDay && $0.transactionDate < endOfDay }
+                    .reduce(Decimal.zero) { $0 + $1.signedAmount }
+
+                runningBalance += -net
+            }
+
+            self.balanceHistory = history.reversed()
+
+        } catch {
+            print("Не удалось загрузить транзакции для баланса: \(error)")
+        }
+    }
+
+
+
 }

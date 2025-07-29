@@ -2,6 +2,7 @@ import UIKit
 import Combine
 import SwiftUI
 import SwiftData
+import PieChart
 
 final class AnalysisViewController: UIViewController, UIAdaptivePresentationControllerDelegate {
 
@@ -10,6 +11,7 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
     private let startDatePicker = UIDatePicker()
     private let endDatePicker = UIDatePicker()
     private let sumLabel = UILabel()
+    private let pieChartView = PieChartView()
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let activityIndicator = UIActivityIndicatorView(style: .large)
 
@@ -23,7 +25,6 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
         return control
     }()
 
-    // MARK: - Init
     init(client: NetworkClient, accountId: Int, direction: Direction, modelContainer: ModelContainer) {
         self.viewModel = AnalysisViewModel(
             client: client,
@@ -33,13 +34,12 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
         )
         super.init(nibName: nil, bundle: nil)
     }
-    
+
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    // MARK: - Lifecycle
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(true, animated: false)
@@ -55,7 +55,6 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
         bindViewModel()
     }
 
-    // MARK: - Header
     private func setupCustomHeader() {
         let backButton = UIButton(type: .system)
         backButton.setTitle("Назад", for: .normal)
@@ -91,7 +90,6 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
         ])
     }
 
-    // MARK: - Subviews
     private func setupSubviews() {
         for picker in [startDatePicker, endDatePicker] {
             picker.datePickerMode = .date
@@ -123,6 +121,9 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
         periodStack.clipsToBounds = true
         periodStack.translatesAutoresizingMaskIntoConstraints = false
 
+        pieChartView.translatesAutoresizingMaskIntoConstraints = false
+        pieChartView.backgroundColor = .clear
+
         let operationsHeader = UILabel()
         operationsHeader.text = "ОПЕРАЦИИ"
         operationsHeader.font = UIFont.preferredFont(forTextStyle: .caption1)
@@ -143,6 +144,7 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
         view.addSubview(activityIndicator)
 
         view.addSubview(periodStack)
+        view.addSubview(pieChartView)
         view.addSubview(operationsHeader)
         view.addSubview(tableView)
 
@@ -151,7 +153,12 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
             periodStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             periodStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            operationsHeader.topAnchor.constraint(equalTo: periodStack.bottomAnchor, constant: 16),
+            pieChartView.topAnchor.constraint(equalTo: periodStack.bottomAnchor, constant: 16),
+            pieChartView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            pieChartView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            pieChartView.heightAnchor.constraint(equalToConstant: 200),
+
+            operationsHeader.topAnchor.constraint(equalTo: pieChartView.bottomAnchor, constant: 16),
             operationsHeader.leadingAnchor.constraint(equalTo: periodStack.leadingAnchor),
             operationsHeader.trailingAnchor.constraint(equalTo: periodStack.trailingAnchor),
 
@@ -183,8 +190,10 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
             .store(in: &cancellables)
 
         viewModel.onUpdate = { [weak self] in
-            self?.updateSum()
-            self?.tableView.reloadData()
+            guard let self = self else { return }
+            self.updateSum()
+            self.pieChartView.animateTransition(to: self.viewModel.chartEntities)
+            self.tableView.reloadData()
         }
     }
 
@@ -268,7 +277,6 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
         return view
     }
 
-    // MARK: - Actions
     @objc private func didTapBack() {
         navigationController?.popViewController(animated: true)
     }
@@ -295,7 +303,6 @@ final class AnalysisViewController: UIViewController, UIAdaptivePresentationCont
         viewModel.sortOption = sender.selectedSegmentIndex == 0 ? .date : .amount
     }
 
-    // MARK: - Delegate on dismiss
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
         Task {
             await viewModel.load()
@@ -331,5 +338,4 @@ extension AnalysisViewController: UITableViewDataSource, UITableViewDelegate {
             vc.presentationController?.delegate = self
         }
     }
-
 }
